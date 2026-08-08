@@ -21,16 +21,6 @@ if errorlevel 1 (
   exit /b 1
 )
 
-if not exist "%PROJECT_DIR%\node_modules\" (
-  echo 首次启动，正在安装依赖...
-  call npm install
-  if errorlevel 1 (
-    echo 依赖安装失败，请检查网络或 npm 配置。
-    pause
-    exit /b 1
-  )
-)
-
 if exist "%PID_FILE%" (
   set "OLD_PID="
   set /p OLD_PID=<"%PID_FILE%"
@@ -66,7 +56,7 @@ if defined PORT_PID (
 
 echo 正在启动卡片分镜服务...
 set "NEW_PID="
-for /f "usebackq delims=" %%I in (`powershell -NoProfile -Command "$cmd = 'npm start ^> ""' + $env:LOG_FILE + '"" 2^>^&1'; $p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $cmd -WorkingDirectory $env:PROJECT_DIR -PassThru; $p.Id"`) do (
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -Command "$cmd = 'node server.js ^> ""' + $env:LOG_FILE + '"" 2^>^&1'; $p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $cmd -WorkingDirectory $env:PROJECT_DIR -PassThru; $p.Id"`) do (
   set "NEW_PID=%%I"
 )
 

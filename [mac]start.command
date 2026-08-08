@@ -17,11 +17,6 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-if [ ! -d "$PROJECT_DIR/node_modules" ]; then
-  echo "首次启动，正在安装依赖..."
-  npm install
-fi
-
 if [ -f "$PID_FILE" ]; then
   OLD_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
   if [ -n "${OLD_PID:-}" ] && kill -0 "$OLD_PID" >/dev/null 2>&1; then
@@ -59,7 +54,7 @@ if [ -n "${PORT_PID:-}" ]; then
 fi
 
 echo "正在启动卡片分镜服务..."
-nohup npm start >"$LOG_FILE" 2>&1 &
+nohup node server.js >"$LOG_FILE" 2>&1 &
 NEW_PID=$!
 echo "$NEW_PID" >"$PID_FILE"
 

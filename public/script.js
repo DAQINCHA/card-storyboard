@@ -2186,7 +2186,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 renderProjects();
             } catch (error) {
                 console.error('Load project list failed:', error);
-                projectsGrid.innerHTML = '<p style="color:#ef4444;font-size:1rem;">项目列表加载失败，请先运行 `npm install` 和 `npm start`。</p>';
+                projectsGrid.innerHTML = '<p style="color:#ef4444;font-size:1rem;">项目列表加载失败，请检查服务端是否已正常启动。</p>';
             }
         }, () => perfMeta);
     }

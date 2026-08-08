@@ -50,31 +50,12 @@
 
 <body>
     <div id="home-view" class="home-view">
-        <aside class="home-sidebar">
-            <div class="sidebar-logo" aria-label="卡片分镜">🎬</div>
-            <div class="sidebar-divider" aria-hidden="true"></div>
-            <button class="sidebar-item active" type="button">
-                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path d="M3 8a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8z"
-                        stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
-                </svg>
-                <span>项目</span>
-            </button>
-            <button class="sidebar-item" type="button" title="该功能还在开发中" aria-label="联系我（该功能还在开发中）">
-                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path d="M16 19v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1" stroke="currentColor" stroke-width="1.8"
-                        stroke-linecap="round" />
-                    <circle cx="9.5" cy="7" r="3.2" stroke="currentColor" stroke-width="1.8" />
-                    <path d="M16 8h5M18.5 5.5v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
-                </svg>
-                <span>联系我</span>
-            </button>
-        </aside>
-
         <section class="home-main">
             <header class="home-header">
                 <div class="home-header-left">
                     <h1>我的分镜本</h1>
+                </div>
+                <div class="home-toolbar-actions">
                     <div class="home-controls">
                         <label for="project-sort">排序</label>
                         <select id="project-sort">
@@ -83,8 +64,8 @@
                             <option value="updated_asc">最早修改</option>
                         </select>
                     </div>
+                    <input id="project-search" class="home-search" type="search" placeholder="搜索分镜本...">
                 </div>
-                <input id="project-search" class="home-search" type="search" placeholder="搜索分镜本...">
             </header>
 
             <main class="projects-grid" id="projects-grid">

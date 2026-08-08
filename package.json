@@ -3,11 +3,12 @@
   "version": "1.0.0",
   "private": true,
   "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
+  "engines": {
+    "node": ">=22.5"
   },
-  "dependencies": {
-    "better-sqlite3": "^11.8.1",
-    "express": "^4.21.2"
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node --check public/script.js && node --check public/js/api.js && node --check public/js/router.js",
+    "test": "node --test"
   }
 }
