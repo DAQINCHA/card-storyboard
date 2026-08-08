@@ -6,6 +6,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>卡片分镜</title>
     <meta name="application-name" content="卡片分镜">
+    <meta name="theme-color" content="#3b82f6">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="卡片分镜">
     <script>
         (function () {
             const VIEW_QUERY_PARAM = 'view';
@@ -40,8 +44,10 @@
             document.documentElement.classList.add(initialClass);
         })();
     </script>
-    <link rel="icon" type="image/svg+xml"
-        href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8E%AC%3C/text%3E%3C/svg%3E">
+    <link rel="icon" type="image/svg+xml" href="icons/app-icon.svg">
+    <link rel="icon" type="image/png" sizes="32x32" href="icons/icon-32.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
+    <link rel="manifest" href="manifest.webmanifest">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
     <!-- SortableJS for Drag and Drop -->
@@ -53,7 +59,11 @@
         <section class="home-main">
             <header class="home-header">
                 <div class="home-header-left">
-                    <h1>我的分镜本</h1>
+                    <img class="brand-mark" src="icons/logo-mark.svg" alt="" width="42" height="42">
+                    <div class="brand-heading">
+                        <h1>卡片分镜</h1>
+                        <span>我的分镜本</span>
+                    </div>
                 </div>
                 <div class="home-toolbar-actions">
                     <div class="home-controls">

@@ -40,6 +40,20 @@ test('serves the frontend and health endpoint', async () => {
     const scriptResponse = await fetch(`${baseUrl}/script.js`);
     assert.equal(scriptResponse.status, 200);
     assert.match(scriptResponse.headers.get('content-type'), /text\/javascript/);
+
+    const manifestResponse = await fetch(`${baseUrl}/manifest.webmanifest`);
+    assert.equal(manifestResponse.status, 200);
+    assert.match(manifestResponse.headers.get('content-type'), /application\/manifest\+json/);
+    assert.equal((await manifestResponse.json()).name, '卡片分镜');
+
+    const appIconResponse = await fetch(`${baseUrl}/icons/icon-512.png`);
+    assert.equal(appIconResponse.status, 200);
+    assert.equal(appIconResponse.headers.get('content-type'), 'image/png');
+    assert.ok((await appIconResponse.arrayBuffer()).byteLength > 0);
+
+    const logoResponse = await fetch(`${baseUrl}/icons/logo-mark.svg`);
+    assert.equal(logoResponse.status, 200);
+    assert.match(logoResponse.headers.get('content-type'), /image\/svg\+xml/);
   });
 });
 
