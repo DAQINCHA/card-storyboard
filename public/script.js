@@ -36,6 +36,14 @@ import {
     syncBrowserHistory
 } from './js/router.js';
 
+const ACCESS_ROLE_LABELS = Object.freeze({
+    anonymous: '只读',
+    viewer: '只读',
+    owner: '所有者',
+    editor: '可编辑',
+    admin: '管理员'
+});
+
 document.addEventListener('DOMContentLoaded', async () => {
     const accessContext = await bootstrapAccess();
     if (!accessContext) {
@@ -192,9 +200,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (storyboardSortable) storyboardSortable.option('disabled', editorReadOnly || isMultiSelectMode);
         if (projectAccessBadge) {
             const accessRole = String(currentProject?.accessRole || '').toLowerCase();
-            projectAccessBadge.textContent = accessRole;
+            projectAccessBadge.textContent = ACCESS_ROLE_LABELS[accessRole] || accessRole;
             projectAccessBadge.dataset.role = accessRole;
             projectAccessBadge.classList.toggle('hidden', !accessRole);
+            if (projectHeader) {
+                if (accessRole) projectHeader.dataset.accessRole = accessRole;
+                else delete projectHeader.dataset.accessRole;
+            }
         }
         if (manageSharingBtn) manageSharingBtn.classList.toggle('hidden', !currentCapabilities.canManageMembers);
     }
@@ -2305,9 +2317,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             const title = fragment.querySelector('.project-card-title');
             const updated = fragment.querySelector('.project-card-updated');
             const pinned = isProjectPinned(project.id);
+            const accessRole = String(project.accessRole || '').toLowerCase();
 
             title.textContent = project.name || '未命名项目';
             updated.textContent = formatUpdatedTime(project.updatedAt);
+            if (accessRole) card.dataset.accessRole = accessRole;
             card.classList.toggle('pinned', pinned);
             updatePinButtonState(pinBtn, pinned);
             const hasPreviewImage = Boolean(project.previewImage);
