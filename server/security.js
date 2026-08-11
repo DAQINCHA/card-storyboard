@@ -11,6 +11,7 @@ const DEFAULT_SCRYPT_PARAMS = Object.freeze({
   saltLength: 16,
   maxmem: 256 * 1024 * 1024
 });
+const DEFAULT_TEMPORARY_PASSWORD = '123456';
 
 class AsyncSemaphore {
   constructor(limit) {
@@ -62,10 +63,7 @@ async function deriveScrypt(password, salt, params) {
   }));
 }
 
-async function hashPassword(password, params = {}) {
-  if (!validatePassword(password)) {
-    throw new Error('Password must contain 12 to 128 characters');
-  }
+async function encodePasswordHash(password, params = {}) {
   const normalized = normalizeScryptParams(params);
   const salt = crypto.randomBytes(normalized.saltLength);
   const derived = await deriveScrypt(password, salt, normalized);
@@ -77,6 +75,17 @@ async function hashPassword(password, params = {}) {
     salt.toString('base64url'),
     Buffer.from(derived).toString('base64url')
   ].join('$');
+}
+
+async function hashPassword(password, params = {}) {
+  if (!validatePassword(password)) {
+    throw new Error('Password must contain 12 to 128 characters');
+  }
+  return encodePasswordHash(password, params);
+}
+
+async function hashTemporaryPassword(params = {}) {
+  return encodePasswordHash(DEFAULT_TEMPORARY_PASSWORD, params);
 }
 
 function parsePasswordHash(encoded) {
@@ -213,9 +222,11 @@ class LoginRateLimiter {
 
 module.exports = {
   DEFAULT_SCRYPT_PARAMS,
+  DEFAULT_TEMPORARY_PASSWORD,
   LoginRateLimiter,
   deriveCsrfToken,
   hashPassword,
+  hashTemporaryPassword,
   normalizeScryptParams,
   normalizeUsername,
   parseCookies,

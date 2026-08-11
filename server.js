@@ -7,6 +7,7 @@ const {
   LoginRateLimiter,
   deriveCsrfToken,
   hashPassword,
+  hashTemporaryPassword,
   normalizeUsername,
   parseCookies,
   performDummyPasswordCheck,
@@ -564,17 +565,26 @@ function createStoryboardStore(databasePath) {
   function updateUser(actor, targetUserId, payload) {
     const target = db.prepare('SELECT * FROM users WHERE id = ?').get(targetUserId);
     if (!target) throw new HttpError(404, 'Account not found', 'account_not_found');
+    if (payload.isAdmin !== undefined && typeof payload.isAdmin !== 'boolean') {
+      throw new HttpError(400, 'Administrator status must be a boolean', 'invalid_admin_status');
+    }
     const active = payload.isActive === undefined ? Boolean(target.is_active) : Boolean(payload.isActive);
+    const isAdmin = payload.isAdmin === undefined ? Boolean(target.is_admin) : payload.isAdmin;
     if (!active && target.is_active) {
       const owned = db.prepare("SELECT COUNT(*) AS count FROM project_members WHERE user_id = ? AND role = 'owner'").get(targetUserId).count;
       if (owned > 0) throw new HttpError(409, 'Transfer owned projects before disabling this account', 'owned_projects_exist', { count: owned });
       if (targetUserId === actor.id) throw new HttpError(409, 'You cannot disable your own account', 'cannot_disable_self');
     }
+    if (target.is_active && target.is_admin && (!active || !isAdmin)) {
+      const otherActiveAdmins = db.prepare('SELECT COUNT(*) AS count FROM users WHERE is_admin = 1 AND is_active = 1 AND id <> ?').get(targetUserId).count;
+      if (otherActiveAdmins === 0) throw new HttpError(409, 'At least one active administrator is required', 'last_active_admin');
+    }
     const displayName = String(payload.displayName ?? target.display_name).trim().slice(0, 80) || target.username;
-    db.prepare('UPDATE users SET display_name = ?, is_active = ?, session_version = session_version + ?, updated_at = ? WHERE id = ?')
-      .run(displayName, active ? 1 : 0, active === Boolean(target.is_active) ? 0 : 1, Date.now(), targetUserId);
-    if (!active) revokeUserSessions(targetUserId);
-    audit('user_updated', { actorUserId: actor.id, targetUserId, metadata: { active, displayName } });
+    const accessChanged = active !== Boolean(target.is_active) || isAdmin !== Boolean(target.is_admin);
+    db.prepare('UPDATE users SET display_name = ?, is_active = ?, is_admin = ?, session_version = session_version + ?, updated_at = ? WHERE id = ?')
+      .run(displayName, active ? 1 : 0, isAdmin ? 1 : 0, accessChanged ? 1 : 0, Date.now(), targetUserId);
+    if (accessChanged) revokeUserSessions(targetUserId);
+    audit('user_updated', { actorUserId: actor.id, targetUserId, metadata: { active, isAdmin, displayName } });
   }
 
   function resetUserPassword(actor, targetUserId, passwordHash) {
@@ -778,8 +788,7 @@ function createStoryboardApplication({
           requireCsrf(request, auth); const payload = await readJson(request);
           const username = normalizeUsername(payload.username);
           if (!username) throw new HttpError(400, 'Username format is invalid', 'invalid_username');
-          if (!validatePassword(payload.password)) throw new HttpError(400, 'Password must contain 12 to 128 characters', 'invalid_password');
-          const id = store.createUser(auth.user, { username, displayName: String(payload.displayName || '').trim().slice(0, 80), passwordHash: await hashPassword(payload.password, passwordParams), isAdmin: Boolean(payload.isAdmin) });
+          const id = store.createUser(auth.user, { username, displayName: String(payload.displayName || '').trim().slice(0, 80), passwordHash: await hashTemporaryPassword(passwordParams), isAdmin: Boolean(payload.isAdmin) });
           return sendJson(response, 201, { id });
         }
       }
@@ -791,9 +800,8 @@ function createStoryboardApplication({
       }
       const adminResetMatch = /^\/api\/admin\/users\/(\d+)\/reset-password$/.exec(url.pathname);
       if (adminResetMatch && request.method === 'POST') {
-        const auth = authenticate(request); requireAdmin(auth); requireCsrf(request, auth); const payload = await readJson(request);
-        if (!validatePassword(payload.password)) throw new HttpError(400, 'Password must contain 12 to 128 characters', 'invalid_password');
-        store.resetUserPassword(auth.user, Number(adminResetMatch[1]), await hashPassword(payload.password, passwordParams)); return sendEmpty(response, 204);
+        const auth = authenticate(request); requireAdmin(auth); requireCsrf(request, auth);
+        store.resetUserPassword(auth.user, Number(adminResetMatch[1]), await hashTemporaryPassword(passwordParams)); return sendEmpty(response, 204);
       }
 
       if (url.pathname === '/api/projects') {

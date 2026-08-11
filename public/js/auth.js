@@ -111,7 +111,7 @@ async function openAdminDialog() {
             <h3>创建账户</h3>
             <label>用户名<input name="username" pattern="[a-z0-9][a-z0-9._-]{2,31}" required></label>
             <label>显示名称<input name="displayName" maxlength="80"></label>
-            <label>临时密码<input name="password" type="password" minlength="12" maxlength="128" required></label>
+            <p class="dialog-note">临时密码固定为 <strong>123456</strong>，用户首次登录时必须修改。</p>
             <label class="inline-check"><input name="isAdmin" type="checkbox"> 系统管理员</label>
             <button class="primary-btn" type="submit">创建账户</button>
             <p class="form-message" aria-live="polite"></p>
@@ -130,26 +130,28 @@ async function openAdminDialog() {
             row.querySelector('small').textContent = `${user.username} · ${user.isAdmin ? '管理员' : '普通账户'} · ${user.isActive ? '启用' : '停用'} · 拥有 ${user.ownedProjects} 个项目`;
             const actions = row.querySelector('.row-actions');
             const reset = document.createElement('button');
-            reset.type = 'button'; reset.className = 'secondary-btn compact-btn'; reset.textContent = '重置密码';
-            const resetPassword = document.createElement('input');
-            resetPassword.type = 'password'; resetPassword.placeholder = '至少 12 位临时密码'; resetPassword.className = 'compact-input hidden';
+            reset.type = 'button'; reset.className = 'secondary-btn compact-btn'; reset.textContent = '重制密码';
             reset.addEventListener('click', async () => {
-                if (resetPassword.classList.contains('hidden')) {
-                    resetPassword.classList.remove('hidden');
-                    resetPassword.focus();
-                    return;
-                }
-                const password = resetPassword.value;
-                if (!password) return;
+                if (!window.confirm(`确认将 ${user.username} 的临时密码重置为 123456？`)) return;
                 try {
-                    await apiRequest(`/api/admin/users/${user.id}/reset-password`, { method: 'POST', body: JSON.stringify({ password }) });
-                    resetPassword.value = '';
-                    resetPassword.classList.add('hidden');
-                    alert('密码已重置，用户下次登录必须改密。');
+                    await apiRequest(`/api/admin/users/${user.id}/reset-password`, { method: 'POST', body: JSON.stringify({}) });
+                    alert('临时密码已重置为 123456，用户下次登录必须改密。');
                 } catch (error) { alert(error.message); }
             });
-            actions.append(resetPassword, reset);
+            actions.append(reset);
             if (user.id !== currentAuth.user.id) {
+                const roleToggle = document.createElement('button');
+                roleToggle.type = 'button'; roleToggle.className = 'secondary-btn compact-btn';
+                roleToggle.textContent = user.isAdmin ? '改为普通账户' : '设为管理员';
+                roleToggle.addEventListener('click', async () => {
+                    const nextLabel = user.isAdmin ? '普通账户' : '管理员';
+                    if (!window.confirm(`确认将 ${user.username} 改为${nextLabel}？该用户当前登录会立即失效。`)) return;
+                    try {
+                        await apiRequest(`/api/admin/users/${user.id}`, { method: 'PATCH', body: JSON.stringify({ isAdmin: !user.isAdmin }) });
+                        await render();
+                    } catch (error) { alert(error.message); }
+                });
+                actions.appendChild(roleToggle);
                 const toggle = document.createElement('button');
                 toggle.type = 'button'; toggle.className = 'secondary-btn compact-btn'; toggle.textContent = user.isActive ? '停用' : '启用';
                 toggle.addEventListener('click', async () => {
@@ -173,11 +175,10 @@ async function openAdminDialog() {
                 body: JSON.stringify({
                     username: form.elements.username.value,
                     displayName: form.elements.displayName.value,
-                    password: form.elements.password.value,
                     isAdmin: form.elements.isAdmin.checked
                 })
             });
-            form.reset(); message.textContent = '账户已创建。'; await render();
+            form.reset(); message.textContent = '账户已创建，临时密码为 123456。'; await render();
         } catch (error) { message.textContent = error.message; }
     });
     try { await render(); } catch (error) { list.textContent = error.message; }

@@ -2158,6 +2158,14 @@ body.is-sorting {
     margin-bottom: 0.8rem;
 }
 
+.inline-form .primary-btn {
+    height: auto;
+    padding: 0.55rem 0.7rem;
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    font-weight: 700;
+}
+
 .member-row,
 .admin-user-row {
     display: flex;

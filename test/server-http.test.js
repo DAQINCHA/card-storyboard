@@ -11,6 +11,7 @@ const { hashPassword } = require('../server/security.js');
 const projectRoot = path.dirname(__dirname);
 const TEST_ORIGIN = 'http://storyboard.test';
 const TEST_PASSWORD = 'correct horse battery staple';
+const TEST_TEMPORARY_PASSWORD = '123456';
 const TEST_PASSWORD_PARAMS = { N: 1024, r: 8, p: 1, maxmem: 16 * 1024 * 1024 };
 
 function createLegacyTestDatabase(databasePath) {
@@ -99,21 +100,25 @@ function api(baseUrl, session, pathname, options = {}) {
   });
 }
 
-async function createAccount(baseUrl, admin, username, password = TEST_PASSWORD) {
+async function createAccount(baseUrl, admin, username) {
   const response = await api(baseUrl, admin, '/api/admin/users', {
-    method: 'POST', body: { username, displayName: username.toUpperCase(), password }
+    method: 'POST', body: { username, displayName: username.toUpperCase() }
   });
   assert.equal(response.status, 201, await response.clone().text());
   return (await response.json()).id;
 }
 
 async function activateAccount(baseUrl, username) {
-  const temporary = await login(baseUrl, username, TEST_PASSWORD);
+  const temporary = await login(baseUrl, username, TEST_TEMPORARY_PASSWORD);
   assert.equal(temporary.user.mustChangePassword, true);
   assert.equal((await api(baseUrl, temporary, '/api/projects')).status, 403);
+  const weakChange = await api(baseUrl, temporary, '/api/auth/change-password', {
+    method: 'POST', body: { currentPassword: TEST_TEMPORARY_PASSWORD, newPassword: TEST_TEMPORARY_PASSWORD }
+  });
+  assert.equal(weakChange.status, 400);
   const newPassword = `${username} permanent password 2026`;
   const changed = await api(baseUrl, temporary, '/api/auth/change-password', {
-    method: 'POST', body: { currentPassword: TEST_PASSWORD, newPassword }
+    method: 'POST', body: { currentPassword: TEST_TEMPORARY_PASSWORD, newPassword }
   });
   assert.equal(changed.status, 204);
   return login(baseUrl, username, newPassword);
@@ -209,6 +214,40 @@ test('authenticates with HttpOnly session and enforces CSRF, edit locks and proj
     const logout = await api(baseUrl, admin, '/api/auth/logout', { method: 'POST' });
     assert.equal(logout.status, 204);
     assert.equal((await fetch(`${baseUrl}/api/auth/session`, { headers: { Cookie: admin.cookie } })).status, 401);
+  });
+});
+
+test('allows administrators to promote and demote accounts without risking the last administrator', async () => {
+  await withServer(async (baseUrl) => {
+    const admin = await login(baseUrl);
+    const operatorId = await createAccount(baseUrl, admin, 'operator');
+    const operator = await activateAccount(baseUrl, 'operator');
+
+    const promote = await api(baseUrl, admin, `/api/admin/users/${operatorId}`, {
+      method: 'PATCH', body: { isAdmin: true }
+    });
+    assert.equal(promote.status, 204);
+    assert.equal((await api(baseUrl, operator, '/api/auth/session')).status, 401);
+
+    const operatorAdmin = await login(baseUrl, 'operator', 'operator permanent password 2026');
+    assert.equal(operatorAdmin.user.isAdmin, true);
+    assert.equal((await api(baseUrl, operatorAdmin, '/api/admin/users')).status, 200);
+
+    const demote = await api(baseUrl, admin, `/api/admin/users/${operatorId}`, {
+      method: 'PATCH', body: { isAdmin: false }
+    });
+    assert.equal(demote.status, 204);
+    assert.equal((await api(baseUrl, operatorAdmin, '/api/auth/session')).status, 401);
+
+    const operatorUser = await login(baseUrl, 'operator', 'operator permanent password 2026');
+    assert.equal(operatorUser.user.isAdmin, false);
+    assert.equal((await api(baseUrl, operatorUser, '/api/admin/users')).status, 404);
+
+    const lastAdminDemotion = await api(baseUrl, admin, `/api/admin/users/${admin.user.id}`, {
+      method: 'PATCH', body: { isAdmin: false }
+    });
+    assert.equal(lastAdminDemotion.status, 409);
+    assert.equal((await lastAdminDemotion.json()).code, 'last_active_admin');
   });
 });
 
