@@ -301,37 +301,85 @@ test('can disable public self-registration without affecting login', async () =>
   }, initialize, { registrationEnabled: false });
 });
 
-test('allows administrators to promote and demote accounts without risking the last administrator', async () => {
-  await withServer(async (baseUrl) => {
+test('keeps admin as the only administrator and rejects account status changes', async () => {
+  await withServer(async (baseUrl, _databasePath, application) => {
     const admin = await login(baseUrl);
     const operatorId = await createAccount(baseUrl, admin, 'operator');
-    const operator = await activateAccount(baseUrl, 'operator');
 
     const promote = await api(baseUrl, admin, `/api/admin/users/${operatorId}`, {
       method: 'PATCH', body: { isAdmin: true }
     });
-    assert.equal(promote.status, 204);
-    assert.equal((await api(baseUrl, operator, '/api/auth/session')).status, 401);
+    assert.equal(promote.status, 409);
+    assert.equal((await promote.json()).code, 'admin_status_fixed');
 
-    const operatorAdmin = await login(baseUrl, 'operator', 'operator permanent password 2026');
-    assert.equal(operatorAdmin.user.isAdmin, true);
-    assert.equal((await api(baseUrl, operatorAdmin, '/api/admin/users')).status, 200);
-
-    const demote = await api(baseUrl, admin, `/api/admin/users/${operatorId}`, {
-      method: 'PATCH', body: { isAdmin: false }
+    const disable = await api(baseUrl, admin, `/api/admin/users/${operatorId}`, {
+      method: 'PATCH', body: { isActive: false }
     });
-    assert.equal(demote.status, 204);
-    assert.equal((await api(baseUrl, operatorAdmin, '/api/auth/session')).status, 401);
+    assert.equal(disable.status, 409);
+    assert.equal((await disable.json()).code, 'account_status_fixed');
 
-    const operatorUser = await login(baseUrl, 'operator', 'operator permanent password 2026');
-    assert.equal(operatorUser.user.isAdmin, false);
-    assert.equal((await api(baseUrl, operatorUser, '/api/admin/users')).status, 404);
-
-    const lastAdminDemotion = await api(baseUrl, admin, `/api/admin/users/${admin.user.id}`, {
-      method: 'PATCH', body: { isAdmin: false }
+    const adminCreate = await api(baseUrl, admin, '/api/admin/users', {
+      method: 'POST', body: { username: 'secondadmin', displayName: 'Second Admin', isAdmin: true }
     });
-    assert.equal(lastAdminDemotion.status, 409);
-    assert.equal((await lastAdminDemotion.json()).code, 'last_active_admin');
+    assert.equal(adminCreate.status, 409);
+    assert.equal((await adminCreate.json()).code, 'admin_status_fixed');
+
+    application.store.db.prepare('UPDATE users SET is_admin = 1 WHERE id = ?').run(operatorId);
+    const operator = await activateAccount(baseUrl, 'operator');
+    assert.equal(operator.user.isAdmin, false);
+    assert.equal((await api(baseUrl, operator, '/api/admin/users')).status, 404);
+    const users = await (await api(baseUrl, admin, '/api/admin/users')).json();
+    assert.equal(users.find((user) => user.id === operatorId).isAdmin, false);
+  });
+});
+
+test('deletes non-admin accounts after transferring their projects to admin', async () => {
+  await withServer(async (baseUrl, _databasePath, application) => {
+    const admin = await login(baseUrl);
+    const accountId = await createAccount(baseUrl, admin, 'departing');
+    const account = await activateAccount(baseUrl, 'departing');
+    const firstProject = await (await api(baseUrl, account, '/api/projects', {
+      method: 'POST', body: { name: 'Transferred one' }
+    })).json();
+    const secondProject = await (await api(baseUrl, account, '/api/projects', {
+      method: 'POST', body: { name: 'Transferred two' }
+    })).json();
+    const adminProject = await (await api(baseUrl, admin, '/api/projects', {
+      method: 'POST', body: { name: 'Admin owned' }
+    })).json();
+    await api(baseUrl, account, `/api/projects/${firstProject.id}/members`, {
+      method: 'POST', body: { username: 'admin', role: 'editor' }
+    });
+    await api(baseUrl, admin, `/api/projects/${adminProject.id}/members`, {
+      method: 'POST', body: { username: 'departing', role: 'viewer' }
+    });
+
+    const deleted = await api(baseUrl, admin, `/api/admin/users/${accountId}`, { method: 'DELETE' });
+    assert.equal(deleted.status, 204);
+    assert.equal((await api(baseUrl, account, '/api/auth/session')).status, 401);
+    const users = await (await api(baseUrl, admin, '/api/admin/users')).json();
+    assert.equal(users.some((user) => user.id === accountId), false);
+
+    const transferred = await (await api(baseUrl, admin, '/api/projects')).json();
+    assert.deepEqual(
+      transferred.filter((item) => [firstProject.id, secondProject.id].includes(item.id)).map((item) => item.owner.username),
+      ['admin', 'admin']
+    );
+    assert.equal(application.store.db.prepare("SELECT COUNT(*) AS count FROM project_members WHERE user_id = ? AND role = 'owner'").get(admin.user.id).count, 3);
+    assert.equal(application.store.db.prepare('SELECT COUNT(*) AS count FROM project_members WHERE user_id = ?').get(accountId).count, 0);
+
+    const auditRow = application.store.db.prepare("SELECT target_user_id, metadata_json FROM security_audit_events WHERE event_type = 'user_deleted' ORDER BY id DESC LIMIT 1").get();
+    assert.equal(auditRow.target_user_id, null);
+    assert.deepEqual(JSON.parse(auditRow.metadata_json), {
+      username: 'departing',
+      displayName: 'DEPARTING',
+      transferredProjects: 2,
+      transferredToUserId: admin.user.id
+    });
+
+    const protectedDelete = await api(baseUrl, admin, `/api/admin/users/${admin.user.id}`, { method: 'DELETE' });
+    assert.equal(protectedDelete.status, 409);
+    assert.equal((await protectedDelete.json()).code, 'admin_account_protected');
   });
 });
 
@@ -418,6 +466,20 @@ test('enforces owner editor viewer permissions and revocable anonymous sharing',
     const editorList = await (await api(baseUrl, editor, '/api/projects')).json();
     assert.equal(editorList.length, 1);
     assert.equal(editorList[0].accessRole, 'editor');
+    assert.deepEqual(editorList[0].owner, {
+      id: admin.user.id,
+      username: admin.user.username,
+      displayName: admin.user.displayName
+    });
+
+    const editorOwned = await (await api(baseUrl, editor, '/api/projects', {
+      method: 'POST', body: { name: 'Editor project' }
+    })).json();
+    const adminList = await (await api(baseUrl, admin, '/api/projects')).json();
+    assert.equal(adminList.find((item) => item.id === editorOwned.id).owner.username, 'editor');
+    const ownerSearch = await (await api(baseUrl, admin, '/api/projects?search=EDITOR')).json();
+    assert.deepEqual(ownerSearch.map((item) => item.id), [editorOwned.id]);
+
     assert.equal((await api(baseUrl, viewer, `/api/projects/${project.id}`)).status, 200);
     assert.equal((await api(baseUrl, viewer, `/api/projects/${project.id}/lock`, { method: 'POST', body: {} })).status, 404);
     assert.equal((await api(baseUrl, viewer, `/api/projects/${project.id}`, { method: 'DELETE' })).status, 404);

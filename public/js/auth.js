@@ -239,7 +239,6 @@ async function openAdminDialog() {
             <label>用户名<input name="username" pattern="[a-z0-9][a-z0-9._-]{2,31}" required></label>
             <label>显示名称<input name="displayName" maxlength="80"></label>
             <p class="dialog-note">临时密码固定为 <strong>123456</strong>，用户首次登录时必须修改。</p>
-            <label class="inline-check"><input name="isAdmin" type="checkbox"> 系统管理员</label>
             <button class="primary-btn" type="submit">创建账户</button>
             <p class="form-message" aria-live="polite"></p>
         </form>
@@ -271,27 +270,19 @@ async function openAdminDialog() {
                 edit.type = 'button'; edit.className = 'secondary-btn compact-btn'; edit.textContent = '编辑资料';
                 edit.addEventListener('click', () => openEditUserDialog(user, render));
                 actions.prepend(edit);
-                const roleToggle = document.createElement('button');
-                roleToggle.type = 'button'; roleToggle.className = 'secondary-btn compact-btn';
-                roleToggle.textContent = user.isAdmin ? '改为普通账户' : '设为管理员';
-                roleToggle.addEventListener('click', async () => {
-                    const nextLabel = user.isAdmin ? '普通账户' : '管理员';
-                    if (!window.confirm(`确认将 ${user.username} 改为${nextLabel}？该用户当前登录会立即失效。`)) return;
+                const deleteButton = document.createElement('button');
+                deleteButton.type = 'button'; deleteButton.className = 'danger-btn compact-btn'; deleteButton.textContent = '删除';
+                deleteButton.addEventListener('click', async () => {
+                    const projectMessage = user.ownedProjects > 0
+                        ? `其拥有的 ${user.ownedProjects} 个项目将全部移交给 admin。`
+                        : '该账户没有拥有的项目。';
+                    if (!window.confirm(`确认永久删除账户 ${user.displayName || user.username}（${user.username}）？\n\n${projectMessage}\n账户及其登录权限将被删除，此操作无法撤销。`)) return;
                     try {
-                        await apiRequest(`/api/admin/users/${user.id}`, { method: 'PATCH', body: JSON.stringify({ isAdmin: !user.isAdmin }) });
+                        await apiRequest(`/api/admin/users/${user.id}`, { method: 'DELETE' });
                         await render();
                     } catch (error) { alert(error.message); }
                 });
-                actions.appendChild(roleToggle);
-                const toggle = document.createElement('button');
-                toggle.type = 'button'; toggle.className = 'secondary-btn compact-btn'; toggle.textContent = user.isActive ? '停用' : '启用';
-                toggle.addEventListener('click', async () => {
-                    try {
-                        await apiRequest(`/api/admin/users/${user.id}`, { method: 'PATCH', body: JSON.stringify({ isActive: !user.isActive }) });
-                        await render();
-                    } catch (error) { alert(error.message); }
-                });
-                actions.appendChild(toggle);
+                actions.appendChild(deleteButton);
             }
             list.appendChild(row);
         });
@@ -305,8 +296,7 @@ async function openAdminDialog() {
                 method: 'POST',
                 body: JSON.stringify({
                     username: form.elements.username.value,
-                    displayName: form.elements.displayName.value,
-                    isAdmin: form.elements.isAdmin.checked
+                    displayName: form.elements.displayName.value
                 })
             });
             form.reset(); message.textContent = '账户已创建，临时密码为 123456。'; await render();

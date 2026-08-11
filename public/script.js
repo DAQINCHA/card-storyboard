@@ -2285,28 +2285,32 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function renderProjects() {
         projectsGrid.innerHTML = '';
+        const isAdminHome = Boolean(appUser?.isAdmin);
+        projectsGrid.classList.toggle('is-admin-grouped', isAdminHome);
 
-        const createWrap = document.createElement('article');
-        createWrap.className = 'new-project-card';
-        createWrap.innerHTML = `
-            <button type="button" class="new-project-btn" id="create-project-btn">+</button>
-            <p class="new-project-title">创建新项目</p>
-        `;
-        projectsGrid.appendChild(createWrap);
-        createWrap.querySelector('#create-project-btn').addEventListener('click', async () => {
-            try {
-                const created = await apiRequest('/api/projects', {
-                    method: 'POST'
-                });
-                await refreshProjects();
-                await openProject(created.id);
-            } catch (error) {
-                console.error('Create project failed:', error);
-                alert('创建项目失败，请检查服务是否已启动。');
-            }
-        });
+        const createProjectCard = () => {
+            const createWrap = document.createElement('article');
+            createWrap.className = 'new-project-card';
+            createWrap.innerHTML = `
+                <button type="button" class="new-project-btn" id="create-project-btn">+</button>
+                <p class="new-project-title">创建新项目</p>
+            `;
+            createWrap.querySelector('#create-project-btn').addEventListener('click', async () => {
+                try {
+                    const created = await apiRequest('/api/projects', {
+                        method: 'POST'
+                    });
+                    await refreshProjects();
+                    await openProject(created.id);
+                } catch (error) {
+                    console.error('Create project failed:', error);
+                    alert('创建项目失败，请检查服务是否已启动。');
+                }
+            });
+            return createWrap;
+        };
 
-        projectsCache.forEach((project) => {
+        const createProjectElement = (project) => {
             const fragment = projectCardTemplate.content.cloneNode(true);
             const card = fragment.querySelector('.project-card');
             const cover = fragment.querySelector('.project-card-cover');
@@ -2375,7 +2379,65 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
 
             card.dataset.projectId = String(project.id);
-            projectsGrid.appendChild(fragment);
+            return fragment;
+        };
+
+        if (!isAdminHome) {
+            projectsGrid.appendChild(createProjectCard());
+            projectsCache.forEach((project) => projectsGrid.appendChild(createProjectElement(project)));
+            return;
+        }
+
+        const groupsByOwner = new Map();
+        const currentOwner = {
+            id: appUser.id,
+            username: appUser.username,
+            displayName: appUser.displayName || appUser.username
+        };
+        groupsByOwner.set(String(currentOwner.id), { owner: currentOwner, projects: [] });
+
+        projectsCache.forEach((project) => {
+            const owner = project.owner || currentOwner;
+            const key = String(owner.id ?? owner.username);
+            if (!groupsByOwner.has(key)) groupsByOwner.set(key, { owner, projects: [] });
+            groupsByOwner.get(key).projects.push(project);
+        });
+
+        const groups = Array.from(groupsByOwner.values()).sort((left, right) => {
+            const leftIsCurrent = Number(left.owner.id) === Number(appUser.id);
+            const rightIsCurrent = Number(right.owner.id) === Number(appUser.id);
+            if (leftIsCurrent !== rightIsCurrent) return leftIsCurrent ? -1 : 1;
+            return String(left.owner.displayName || left.owner.username).localeCompare(
+                String(right.owner.displayName || right.owner.username),
+                'zh-Hans-CN'
+            );
+        });
+
+        groups.forEach(({ owner, projects }) => {
+            const section = document.createElement('section');
+            section.className = 'account-project-group';
+
+            const divider = document.createElement('header');
+            divider.className = 'account-project-divider';
+            divider.innerHTML = `
+                <span class="account-project-divider-line" aria-hidden="true"></span>
+                <div class="account-project-divider-label">
+                    <strong class="account-project-owner"></strong>
+                    <span class="account-project-meta"></span>
+                </div>
+                <span class="account-project-divider-line" aria-hidden="true"></span>
+            `;
+            divider.querySelector('.account-project-owner').textContent = owner.displayName || owner.username;
+            divider.querySelector('.account-project-meta').textContent = `@${owner.username} · ${projects.length} 个项目`;
+
+            const grid = document.createElement('div');
+            grid.className = 'account-project-grid';
+            if (Number(owner.id) === Number(appUser.id)) grid.appendChild(createProjectCard());
+            projects.forEach((project) => grid.appendChild(createProjectElement(project)));
+
+            section.appendChild(divider);
+            section.appendChild(grid);
+            projectsGrid.appendChild(section);
         });
     }
 

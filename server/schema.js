@@ -182,6 +182,7 @@ function assertCurrentSchema(db) {
 }
 
 function setupDatabase({ databasePath, username, displayName, passwordHash, mustChangePassword = false, onBeforeCommit = null }) {
+  if (username !== 'admin') throw new Error('The administrator username must be admin');
   mkdirSync(path.dirname(databasePath), { recursive: true });
   let db = openDatabase(databasePath);
   createLegacyTables(db);
