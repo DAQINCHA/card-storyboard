@@ -1,8 +1,7 @@
 export const VIEW_STORAGE_KEY = 'storyboard:last-view';
 export const PROJECT_STORAGE_KEY = 'storyboard:last-project-id';
-export const VIEW_QUERY_PARAM = 'view';
-export const PROJECT_QUERY_PARAM = 'project';
 const HISTORY_STATE_APP = 'storyboard-app';
+const PROJECT_PATH_PATTERN = /^\/project\/(\d+)\/?$/;
 
 export function normalizeProjectId(projectIdLike) {
     const value = Number(projectIdLike);
@@ -14,16 +13,15 @@ export function normalizeProjectId(projectIdLike) {
 
 function buildRouteUrl(route) {
     const params = new URLSearchParams(window.location.search);
-    params.delete(VIEW_QUERY_PARAM);
-    params.delete(PROJECT_QUERY_PARAM);
-
-    if (route.view === 'editor' && normalizeProjectId(route.projectId)) {
-        params.set(VIEW_QUERY_PARAM, 'editor');
-        params.set(PROJECT_QUERY_PARAM, String(route.projectId));
-    }
+    params.delete('view');
+    params.delete('project');
 
     const query = params.toString();
-    return `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`;
+    const projectId = normalizeProjectId(route.projectId);
+    const pathname = route.view === 'editor' && projectId
+        ? `/project/${projectId}`
+        : '/';
+    return `${pathname}${query ? `?${query}` : ''}${window.location.hash}`;
 }
 
 function createHistoryState(route) {
@@ -54,36 +52,12 @@ export function resolveRouteFromHistoryState(state) {
 }
 
 export function resolveRouteFromLocation() {
-    const params = new URLSearchParams(window.location.search);
-    const hasViewParam = params.has(VIEW_QUERY_PARAM);
-    const hasProjectParam = params.has(PROJECT_QUERY_PARAM);
-
-    if (!hasViewParam && !hasProjectParam) {
-        return null;
+    const projectPathMatch = window.location.pathname.match(PROJECT_PATH_PATTERN);
+    if (projectPathMatch) {
+        const projectId = normalizeProjectId(projectPathMatch[1]);
+        return projectId ? { view: 'editor', projectId } : { view: 'home' };
     }
 
-    const viewParam = (params.get(VIEW_QUERY_PARAM) || '').trim().toLowerCase();
-    if (viewParam === 'home') {
-        return { view: 'home' };
-    }
-
-    const projectId = normalizeProjectId(params.get(PROJECT_QUERY_PARAM));
-    if (viewParam === 'editor' || hasProjectParam) {
-        if (projectId) {
-            return { view: 'editor', projectId };
-        }
-        return { view: 'home' };
-    }
-
-    return { view: 'home' };
-}
-
-export function resolveRouteFromSessionStorage() {
-    const lastView = sessionStorage.getItem(VIEW_STORAGE_KEY);
-    const lastProjectId = normalizeProjectId(sessionStorage.getItem(PROJECT_STORAGE_KEY));
-    if (lastView === 'editor' && lastProjectId) {
-        return { view: 'editor', projectId: lastProjectId };
-    }
     return { view: 'home' };
 }
 

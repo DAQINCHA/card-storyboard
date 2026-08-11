@@ -13,28 +13,15 @@
     <meta name="apple-mobile-web-app-title" content="卡片分镜">
     <script>
         (function () {
-            const VIEW_QUERY_PARAM = 'view';
-            const PROJECT_QUERY_PARAM = 'project';
             const PRELOAD_HOME_CLASS = 'preload-view-home';
             const PRELOAD_EDITOR_CLASS = 'preload-view-editor';
             let initialClass = PRELOAD_HOME_CLASS;
 
             try {
-                const params = new URLSearchParams(window.location.search);
-                const hasViewParam = params.has(VIEW_QUERY_PARAM);
-                const hasProjectParam = params.has(PROJECT_QUERY_PARAM);
-                const viewParam = (params.get(VIEW_QUERY_PARAM) || '').trim().toLowerCase();
-                const projectId = Number(params.get(PROJECT_QUERY_PARAM));
-                const hasValidProjectId = Number.isInteger(projectId) && projectId > 0;
-
-                if (viewParam === 'editor' || hasProjectParam) {
-                    initialClass = hasValidProjectId ? PRELOAD_EDITOR_CLASS : PRELOAD_HOME_CLASS;
-                } else if (viewParam === 'home') {
-                    initialClass = PRELOAD_HOME_CLASS;
-                } else if (!hasViewParam && !hasProjectParam) {
-                    const lastView = sessionStorage.getItem('storyboard:last-view');
-                    const lastProjectId = Number(sessionStorage.getItem('storyboard:last-project-id'));
-                    if (lastView === 'editor' && Number.isInteger(lastProjectId) && lastProjectId > 0) {
+                const projectPathMatch = window.location.pathname.match(/^\/project\/(\d+)\/?$/);
+                if (projectPathMatch) {
+                    const projectId = Number(projectPathMatch[1]);
+                    if (Number.isInteger(projectId) && projectId > 0) {
                         initialClass = PRELOAD_EDITOR_CLASS;
                     }
                 }
@@ -45,12 +32,12 @@
             document.documentElement.classList.add(initialClass);
         })();
     </script>
-    <link rel="icon" type="image/svg+xml" href="icons/app-icon.svg">
-    <link rel="icon" type="image/png" sizes="32x32" href="icons/icon-32.png">
-    <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
-    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="icon" type="image/svg+xml" href="/icons/app-icon.svg">
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/icon-32.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png">
+    <link rel="manifest" href="/manifest.webmanifest">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="/style.css">
     <!-- SortableJS for Drag and Drop -->
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 </head>
@@ -60,7 +47,7 @@
         <section class="home-main">
             <header class="home-header">
                 <div class="home-header-left">
-                    <img class="brand-mark" src="icons/logo-mark.svg" alt="" width="42" height="42">
+                    <img class="brand-mark" src="/icons/logo-mark.svg" alt="" width="42" height="42">
                     <div class="brand-heading">
                         <h1>卡片分镜</h1>
                         <span>我的分镜本</span>
@@ -288,7 +275,7 @@
         </article>
     </template>
 
-    <script type="module" src="script.js"></script>
+    <script type="module" src="/script.js"></script>
 </body>
 
 </html>

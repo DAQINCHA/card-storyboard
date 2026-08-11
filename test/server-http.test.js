@@ -37,6 +37,11 @@ test('serves the frontend and health endpoint', async () => {
     assert.equal(indexResponse.status, 200);
     assert.match(await indexResponse.text(), /卡片分镜/);
 
+    const projectRouteResponse = await fetch(`${baseUrl}/project/38`);
+    assert.equal(projectRouteResponse.status, 200);
+    assert.match(projectRouteResponse.headers.get('content-type'), /text\/html/);
+    assert.match(await projectRouteResponse.text(), /卡片分镜/);
+
     const scriptResponse = await fetch(`${baseUrl}/script.js`);
     assert.equal(scriptResponse.status, 200);
     assert.match(scriptResponse.headers.get('content-type'), /text\/javascript/);

@@ -31,7 +31,6 @@ import {
     normalizeProjectId,
     resolveRouteFromHistoryState,
     resolveRouteFromLocation,
-    resolveRouteFromSessionStorage,
     syncBrowserHistory
 } from './js/router.js';
 
@@ -2799,7 +2798,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function resolveInitialRoute() {
-        return resolveRouteFromLocation() || resolveRouteFromSessionStorage();
+        return resolveRouteFromLocation();
     }
 
     async function restoreInitialView() {
