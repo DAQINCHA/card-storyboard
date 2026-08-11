@@ -315,8 +315,8 @@ html.preload-view-editor #editor-view.hidden {
     position: absolute;
     left: 0;
     top: 0;
-    width: 34px;
-    height: 34px;
+    width: 30px;
+    height: 30px;
     background: #dcae12;
     clip-path: polygon(0 0, 100% 0, 0 100%);
     opacity: 1;
@@ -1760,8 +1760,8 @@ body.is-sorting {
 
     .project-card-cover::before {
         left: 0;
-        width: 34px;
-        height: 34px;
+        width: 30px;
+        height: 30px;
         background: #ef765f;
         opacity: 1;
     }
