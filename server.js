@@ -443,9 +443,19 @@ function createStoryboardStore(databasePath) {
     return supplied.length === expected.length && crypto.timingSafeEqual(supplied, expected) ? lock : null;
   }
 
+  function editLockLostError(projectId, session) {
+    const holder = currentLock(projectId);
+    return new HttpError(
+      423,
+      'Edit lock is no longer valid',
+      'edit_lock_lost',
+      holder ? publicLock(holder, session.id) : null
+    );
+  }
+
   function heartbeatLock(projectId, user, session, rawLease) {
     requireProjectAccess(projectId, user, 'edit');
-    if (!validateLease(projectId, session, rawLease)) throw new HttpError(423, 'Edit lock is no longer valid', 'edit_lock_lost');
+    if (!validateLease(projectId, session, rawLease)) throw editLockLostError(projectId, session);
     const now = Date.now();
     db.prepare('UPDATE project_edit_locks SET heartbeat_at = ?, expires_at = ? WHERE project_id = ?').run(now, now + EDIT_LOCK_MS, projectId);
     return { expiresAt: now + EDIT_LOCK_MS };
@@ -458,7 +468,7 @@ function createStoryboardStore(databasePath) {
   function saveProject(projectId, user, session, rawLease, payload) {
     return transaction(() => {
       const current = requireProjectAccess(projectId, user, 'edit');
-      if (!validateLease(projectId, session, rawLease)) throw new HttpError(423, 'Edit lock is no longer valid', 'edit_lock_lost');
+      if (!validateLease(projectId, session, rawLease)) throw editLockLostError(projectId, session);
       const baseVersion = Number(payload.baseVersion);
       if (!Number.isInteger(baseVersion) || baseVersion !== current.version) {
         throw new HttpError(409, 'Project was changed by another editor', 'version_conflict', { currentVersion: current.version });

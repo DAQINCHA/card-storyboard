@@ -322,6 +322,10 @@ function configureAccountControls(auth) {
         });
     }
     document.getElementById('logout-btn')?.addEventListener('click', async () => {
+        if (typeof window.storyboardPrepareForExit === 'function') {
+            const canExit = await window.storyboardPrepareForExit();
+            if (!canExit) return;
+        }
         window.dispatchEvent(new CustomEvent('storyboard-before-logout'));
         await new Promise((resolve) => window.setTimeout(resolve, 80));
         try { await apiRequest('/api/auth/logout', { method: 'POST' }); } catch { /* session may already be gone */ }

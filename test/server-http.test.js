@@ -497,10 +497,20 @@ test('enforces owner editor viewer permissions and revocable anonymous sharing',
     assert.equal(blockedLock.status, 423);
     const forceLock = await api(baseUrl, admin, `/api/projects/${project.id}/lock`, { method: 'POST', body: { force: true } });
     assert.equal(forceLock.status, 200);
+    const oldEditorHeartbeat = await api(baseUrl, editor, `/api/projects/${project.id}/lock`, {
+      method: 'PATCH', headers: { 'X-Edit-Lease': editorLock.leaseToken }
+    });
+    assert.equal(oldEditorHeartbeat.status, 423);
+    const heartbeatPayload = await oldEditorHeartbeat.json();
+    assert.equal(heartbeatPayload.code, 'edit_lock_lost');
+    assert.equal(heartbeatPayload.details.displayName, admin.user.displayName);
+    assert.equal(heartbeatPayload.details.isMine, false);
     const oldEditorSave = await api(baseUrl, editor, `/api/projects/${project.id}`, {
       method: 'PUT', headers: { 'X-Edit-Lease': editorLock.leaseToken }, body: { baseVersion: 2, name: 'lost lock' }
     });
     assert.equal(oldEditorSave.status, 423);
+    const savePayload = await oldEditorSave.json();
+    assert.equal(savePayload.details.username, admin.user.username);
 
     const shareCreate = await api(baseUrl, admin, `/api/projects/${project.id}/share-links`, {
       method: 'POST', body: { label: 'Client review', expiresAt: Date.now() + 60_000 }

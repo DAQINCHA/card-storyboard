@@ -132,11 +132,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     let saveTimer = null;
     let hasUnsavedChanges = false;
     let pendingSavePromise = null;
+    let saveStatusState = 'saved';
+    let saveStatusElement = null;
+    let takeoverNoticeShown = false;
     let searchTimer = null;
     const PRINT_PAGE_STYLE_ID = 'dynamic-print-page-style';
     const PRELOAD_HOME_CLASS = 'preload-view-home';
     const PRELOAD_EDITOR_CLASS = 'preload-view-editor';
     const DEFAULT_NEW_PROJECT_SHOT_COUNT = 5;
+    const EDIT_LOCK_HEARTBEAT_MS = 3000;
     const PINNED_PROJECTS_KEY = `storyboard:pinned-project-ids:${appUser?.id || 'anonymous'}`;
     const PRESET_SCENE_COLOR_ROWS = buildPresetSceneColorRows();
     let pinnedProjectIds = loadPinnedProjectIds();
@@ -154,14 +158,42 @@ document.addEventListener('DOMContentLoaded', async () => {
     let lastTextColorPointer = null;
     let clipboardToastHideTimer = null;
 
+    function renderSaveStatus() {
+        if (!saveStatusElement) return;
+        saveStatusElement.classList.toggle('hidden', saveStatusState !== 'saved');
+    }
+
+    function setSaveStatusState(state) {
+        saveStatusState = state;
+        renderSaveStatus();
+    }
+
     function setLockBanner(message = '', options = {}) {
         if (!editLockBanner) return;
         editLockBanner.innerHTML = '';
+        saveStatusElement = null;
         editLockBanner.classList.toggle('hidden', !message);
+        editLockBanner.classList.toggle('has-save-status', Boolean(message && options.showSaveStatus));
         if (!message) return;
         const text = document.createElement('span');
+        text.className = 'edit-lock-message';
         text.textContent = message;
         editLockBanner.appendChild(text);
+        if (options.showSaveStatus) {
+            const status = document.createElement('span');
+            status.className = 'save-status-indicator';
+            status.setAttribute('role', 'status');
+            status.setAttribute('aria-live', 'polite');
+            const dot = document.createElement('span');
+            dot.className = 'save-status-dot';
+            dot.setAttribute('aria-hidden', 'true');
+            const label = document.createElement('span');
+            label.textContent = '已保存';
+            status.append(dot, label);
+            saveStatusElement = status;
+            editLockBanner.appendChild(status);
+            renderSaveStatus();
+        }
         if (options.force) {
             const button = document.createElement('button');
             button.type = 'button';
@@ -186,6 +218,63 @@ document.addEventListener('DOMContentLoaded', async () => {
             button.addEventListener('click', saveLocalStateAsCopy);
             editLockBanner.appendChild(button);
         }
+    }
+
+    function showTakeoverNotice(error) {
+        if (error?.code !== 'edit_lock_lost') return '';
+        const holder = error.details?.displayName || error.details?.username;
+        if (!holder) return '';
+        const holderLabel = error.details?.isMine ? `${holder}（另一个标签页）` : holder;
+        if (!takeoverNoticeShown) {
+            takeoverNoticeShown = true;
+            const backdrop = document.createElement('div');
+            backdrop.className = 'takeover-alert-backdrop';
+            const dialog = document.createElement('section');
+            dialog.className = 'takeover-alert-dialog';
+            dialog.setAttribute('role', 'alertdialog');
+            dialog.setAttribute('aria-modal', 'true');
+            dialog.setAttribute('aria-labelledby', 'takeover-alert-title');
+
+            const icon = document.createElement('div');
+            icon.className = 'takeover-alert-icon';
+            icon.setAttribute('aria-hidden', 'true');
+            icon.textContent = '!';
+            const title = document.createElement('h2');
+            title.id = 'takeover-alert-title';
+            title.textContent = '编辑已被接管';
+            const message = document.createElement('p');
+            message.className = 'takeover-alert-message';
+            message.textContent = `项目编辑权已被“${holderLabel}”接管。`;
+            const detail = document.createElement('p');
+            detail.className = 'takeover-alert-detail';
+            detail.textContent = hasUnsavedChanges
+                ? '当前页面已切换为只读，本地仍有尚未保存的修改。请另存为副本，或确认后重新载入服务器版本。'
+                : '当前页面已切换为只读，后续修改不会自动保存。';
+            const actions = document.createElement('div');
+            actions.className = 'takeover-alert-actions';
+            const acknowledge = document.createElement('button');
+            acknowledge.type = 'button';
+            acknowledge.className = 'primary-btn';
+            acknowledge.textContent = '知道了';
+            acknowledge.addEventListener('click', () => backdrop.remove());
+            if (hasUnsavedChanges && currentCapabilities.canDuplicate) {
+                const saveCopy = document.createElement('button');
+                saveCopy.type = 'button';
+                saveCopy.className = 'secondary-btn';
+                saveCopy.textContent = '将本地内容另存为副本';
+                saveCopy.addEventListener('click', () => {
+                    backdrop.remove();
+                    saveLocalStateAsCopy();
+                });
+                actions.appendChild(saveCopy);
+            }
+            actions.appendChild(acknowledge);
+            dialog.append(icon, title, message, detail, actions);
+            backdrop.appendChild(dialog);
+            document.body.appendChild(backdrop);
+            window.setTimeout(() => acknowledge.focus(), 0);
+        }
+        return holderLabel;
     }
 
     function applyEditorAccess() {
@@ -226,14 +315,20 @@ document.addEventListener('DOMContentLoaded', async () => {
                 });
             } catch (error) {
                 if (error.status === 423 || error.status === 404) {
+                    const takeoverHolder = showTakeoverNotice(error);
                     editLeaseToken = '';
                     saveConflictActive = true;
                     stopLockHeartbeat();
-                    setLockBanner('编辑权已失效，本地内容不会继续自动保存。', { reload: true });
+                    setLockBanner(
+                        takeoverHolder
+                            ? `编辑权已被 ${takeoverHolder} 接管，本地内容不会继续自动保存。`
+                            : '编辑权已失效，本地内容不会继续自动保存。',
+                        { reload: true, saveCopy: hasUnsavedChanges }
+                    );
                     applyEditorAccess();
                 }
             }
-        }, 15000);
+        }, EDIT_LOCK_HEARTBEAT_MS);
     }
 
     async function releaseCurrentLock() {
@@ -260,7 +355,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             editLeaseToken = lock.leaseToken;
             currentProjectVersion = lock.version;
             saveConflictActive = false;
-            setLockBanner('你正在编辑此项目。');
+            takeoverNoticeShown = false;
+            setSaveStatusState(hasUnsavedChanges ? 'unsaved' : 'saved');
+            setLockBanner('你正在编辑此项目。', { showSaveStatus: true });
             applyEditorAccess();
             startLockHeartbeat();
             return true;
@@ -1495,6 +1592,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             savedShots: 0
         };
         hasUnsavedChanges = false;
+        setSaveStatusState('saving');
 
         pendingSavePromise = perfMeasureAsync('saveState', async () => {
             const payload = buildStateSnapshot();
@@ -1509,6 +1607,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
             currentProjectVersion = saved.version;
             currentProject = saved;
+            setSaveStatusState('saved');
             perfMeta.savedShots = Array.isArray(saved?.shots) ? saved.shots.length : 0;
             syncSavedImageReferences(payload.shots, saved?.shots, saveProjectId);
 
@@ -1528,7 +1627,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
         }, () => perfMeta).catch((error) => {
             console.error('Save failed:', error);
+            setSaveStatusState('error');
             if (error instanceof ApiError && (error.status === 409 || error.status === 423)) {
+                const takeoverHolder = error.status === 423 ? showTakeoverNotice(error) : '';
                 hasUnsavedChanges = true;
                 saveConflictActive = true;
                 editLeaseToken = '';
@@ -1536,7 +1637,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 setLockBanner(
                     error.status === 409
                         ? '服务器上已有更新；已停止自动保存以避免覆盖。'
-                        : '编辑锁已失效；已停止自动保存。',
+                        : (takeoverHolder
+                            ? `编辑权已被 ${takeoverHolder} 接管；已停止自动保存。`
+                            : '编辑锁已失效；已停止自动保存。'),
                     { reload: true, saveCopy: true }
                 );
                 applyEditorAccess();
@@ -1558,6 +1661,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
         hasUnsavedChanges = true;
+        setSaveStatusState('unsaved');
 
         if (saveTimer) {
             clearTimeout(saveTimer);
@@ -1581,9 +1685,30 @@ document.addEventListener('DOMContentLoaded', async () => {
             await pendingSavePromise;
         }
         if (!hasUnsavedChanges) {
-            return;
+            return !saveConflictActive;
         }
         await saveState();
+        return !hasUnsavedChanges && !saveConflictActive;
+    }
+
+    function discardPendingLocalChanges() {
+        if (saveTimer) {
+            clearTimeout(saveTimer);
+            saveTimer = null;
+        }
+        hasUnsavedChanges = false;
+        saveConflictActive = false;
+        setSaveStatusState('saved');
+    }
+
+    async function prepareToLeaveCurrentProject() {
+        if (!currentProjectId || isShareMode) return true;
+        const saved = await flushPendingSave();
+        if (saved) return true;
+        const confirmed = window.confirm('当前修改尚未保存。退出项目后，这些修改将会丢失。\n\n确定仍要退出吗？');
+        if (!confirmed) return false;
+        discardPendingLocalChanges();
+        return true;
     }
 
     function updateShotNumbers() {
@@ -2482,6 +2607,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             currentProjectId = project.id;
             currentProjectVersion = project.version;
             currentCapabilities = project.capabilities || {};
+            takeoverNoticeShown = false;
             sessionStorage.setItem(PROJECT_STORAGE_KEY, String(project.id));
             if (projectInput) {
                 projectInput.value = project.name || '';
@@ -2514,6 +2640,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
             updateShotNumbers();
             hasUnsavedChanges = false;
+            setSaveStatusState('saved');
         } finally {
             isRestoringState = false;
             applyEditorAccess();
@@ -2537,8 +2664,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             throw new Error('Invalid project id');
         }
 
-        if (flushSave) {
-            await flushPendingSave();
+        if (flushSave && !await prepareToLeaveCurrentProject()) {
+            switchToEditor({ syncHistory: true, replaceHistory: true });
+            return false;
         }
         await releaseCurrentLock();
         const project = await apiRequest(`/api/projects/${normalizedProjectId}`);
@@ -2552,6 +2680,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             setLockBanner(project.accessRole === 'anonymous' ? '匿名只读分享' : '你对该项目拥有只读权限。');
             applyEditorAccess();
         }
+        return true;
     }
 
     if (typeof Sortable !== 'undefined') {
@@ -2989,10 +3118,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         } = options;
 
         if (isShareMode) return;
-        if (flushSave) await flushPendingSave();
+        if (flushSave && !await prepareToLeaveCurrentProject()) {
+            switchToEditor({ syncHistory: true, replaceHistory: true });
+            return false;
+        }
         await releaseCurrentLock();
         switchToHome({ syncHistory, replaceHistory });
         await refreshProjects();
+        return true;
     }
 
     backToHomeBtn.addEventListener('click', () => {
@@ -3068,13 +3201,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             // ignore font readiness failures
         });
     }
-    window.addEventListener('beforeunload', () => {
-        if (currentProjectId) {
-            if (saveTimer) {
-                clearTimeout(saveTimer);
-                saveTimer = null;
-            }
-            saveState();
+    window.storyboardPrepareForExit = prepareToLeaveCurrentProject;
+
+    window.addEventListener('beforeunload', (event) => {
+        if (hasUnsavedChanges || pendingSavePromise || saveTimer) {
+            event.preventDefault();
+            event.returnValue = '';
+            return;
         }
         releaseCurrentLock();
     });
