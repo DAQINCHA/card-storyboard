@@ -57,7 +57,7 @@
                     <div class="account-actions">
                         <span id="account-name" class="account-name"></span>
                         <button id="account-btn" class="secondary-btn compact-btn" type="button">账户</button>
-                        <button id="admin-accounts-btn" class="secondary-btn compact-btn hidden" type="button">管理账户</button>
+                        <button id="admin-accounts-btn" class="secondary-btn compact-btn hidden" type="button">管理</button>
                         <button id="logout-btn" class="secondary-btn compact-btn" type="button">退出</button>
                     </div>
                 </div>
@@ -73,6 +73,7 @@
         <div class="app-container">
             <!-- Header -->
             <header class="project-header">
+                <span id="project-access-badge" class="access-badge hidden" aria-label="项目权限"></span>
                 <div class="header-group flex-1">
                     <span class="header-label">PROJECT 项目</span>
                     <input type="text" class="header-input" placeholder="输入项目名">
@@ -110,7 +111,6 @@
                         多选
                     </button>
 
-                    <span id="project-access-badge" class="access-badge"></span>
                     <button id="manage-sharing-btn" class="secondary-btn hidden" type="button">成员与分享</button>
 
                     <div class="add-btn-group">

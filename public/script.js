@@ -190,7 +190,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         storyboardGrid.querySelectorAll('.rich-text-input').forEach((field) => field.setAttribute('contenteditable', canEdit ? 'true' : 'false'));
         storyboardGrid.querySelectorAll('input, button').forEach((control) => { control.disabled = editorReadOnly; });
         if (storyboardSortable) storyboardSortable.option('disabled', editorReadOnly || isMultiSelectMode);
-        if (projectAccessBadge) projectAccessBadge.textContent = currentProject?.accessRole || '';
+        if (projectAccessBadge) {
+            const accessRole = String(currentProject?.accessRole || '').toLowerCase();
+            projectAccessBadge.textContent = accessRole;
+            projectAccessBadge.dataset.role = accessRole;
+            projectAccessBadge.classList.toggle('hidden', !accessRole);
+        }
         if (manageSharingBtn) manageSharingBtn.classList.toggle('hidden', !currentCapabilities.canManageMembers);
     }
 
