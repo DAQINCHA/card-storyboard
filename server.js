@@ -565,8 +565,17 @@ function createStoryboardStore(databasePath) {
   function updateUser(actor, targetUserId, payload) {
     const target = db.prepare('SELECT * FROM users WHERE id = ?').get(targetUserId);
     if (!target) throw new HttpError(404, 'Account not found', 'account_not_found');
+    const identityChangedByRequest = payload.username !== undefined || payload.displayName !== undefined;
+    if (targetUserId === actor.id && identityChangedByRequest) {
+      throw new HttpError(409, 'You cannot edit your own account identity', 'cannot_edit_self_identity');
+    }
     if (payload.isAdmin !== undefined && typeof payload.isAdmin !== 'boolean') {
       throw new HttpError(400, 'Administrator status must be a boolean', 'invalid_admin_status');
+    }
+    let username = target.username;
+    if (payload.username !== undefined) {
+      username = normalizeUsername(payload.username);
+      if (!username) throw new HttpError(400, 'Username format is invalid', 'invalid_username');
     }
     const active = payload.isActive === undefined ? Boolean(target.is_active) : Boolean(payload.isActive);
     const isAdmin = payload.isAdmin === undefined ? Boolean(target.is_admin) : payload.isAdmin;
@@ -579,12 +588,30 @@ function createStoryboardStore(databasePath) {
       const otherActiveAdmins = db.prepare('SELECT COUNT(*) AS count FROM users WHERE is_admin = 1 AND is_active = 1 AND id <> ?').get(targetUserId).count;
       if (otherActiveAdmins === 0) throw new HttpError(409, 'At least one active administrator is required', 'last_active_admin');
     }
-    const displayName = String(payload.displayName ?? target.display_name).trim().slice(0, 80) || target.username;
+    const displayName = String(payload.displayName ?? target.display_name).trim().slice(0, 80) || username;
+    const usernameChanged = username !== target.username;
     const accessChanged = active !== Boolean(target.is_active) || isAdmin !== Boolean(target.is_admin);
-    db.prepare('UPDATE users SET display_name = ?, is_active = ?, is_admin = ?, session_version = session_version + ?, updated_at = ? WHERE id = ?')
-      .run(displayName, active ? 1 : 0, isAdmin ? 1 : 0, accessChanged ? 1 : 0, Date.now(), targetUserId);
-    if (accessChanged) revokeUserSessions(targetUserId);
-    audit('user_updated', { actorUserId: actor.id, targetUserId, metadata: { active, isAdmin, displayName } });
+    const sessionsChanged = usernameChanged || accessChanged;
+    try {
+      transaction(() => {
+        db.prepare('UPDATE users SET username = ?, display_name = ?, is_active = ?, is_admin = ?, session_version = session_version + ?, updated_at = ? WHERE id = ?')
+          .run(username, displayName, active ? 1 : 0, isAdmin ? 1 : 0, sessionsChanged ? 1 : 0, Date.now(), targetUserId);
+        if (sessionsChanged) revokeUserSessions(targetUserId);
+        audit('user_updated', {
+          actorUserId: actor.id,
+          targetUserId,
+          metadata: {
+            active,
+            isAdmin,
+            before: { username: target.username, displayName: target.display_name },
+            after: { username, displayName }
+          }
+        });
+      });
+    } catch (error) {
+      if (String(error.message).includes('UNIQUE')) throw new HttpError(409, 'Account is unavailable', 'account_unavailable');
+      throw error;
+    }
   }
 
   function resetUserPassword(actor, targetUserId, passwordHash) {

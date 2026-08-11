@@ -50,7 +50,7 @@ function showLogin(message = '') {
     });
 }
 
-function createDialog(title, { dismissible = true } = {}) {
+function createDialog(title, { dismissible = true, resetRouteOnClose = true } = {}) {
     const backdrop = document.createElement('div');
     backdrop.className = 'app-dialog-backdrop';
     const dialog = document.createElement('section');
@@ -63,7 +63,7 @@ function createDialog(title, { dismissible = true } = {}) {
     document.body.appendChild(backdrop);
     const close = () => {
         backdrop.remove();
-        if (window.location.pathname === '/account' || window.location.pathname === '/admin/accounts') {
+        if (resetRouteOnClose && (window.location.pathname === '/account' || window.location.pathname === '/admin/accounts')) {
             window.history.replaceState(null, '', '/');
         }
     };
@@ -72,6 +72,46 @@ function createDialog(title, { dismissible = true } = {}) {
     closeButton.addEventListener('click', close);
     backdrop.addEventListener('click', (event) => { if (dismissible && event.target === backdrop) close(); });
     return { backdrop, dialog, body: dialog.querySelector('.dialog-body'), close };
+}
+
+function openEditUserDialog(user, onSaved) {
+    const { body, close } = createDialog('编辑账户资料', { resetRouteOnClose: false });
+    body.innerHTML = `
+        <form class="stack-form">
+            <label>用户名<input name="username" pattern="[A-Za-z0-9][A-Za-z0-9._-]{2,31}" autocomplete="off" required></label>
+            <label>显示名称<input name="displayName" maxlength="80"></label>
+            <p class="dialog-note">用户名会统一保存为小写。更改用户名后，此账户的所有现有会话会立即退出。</p>
+            <button class="primary-btn" type="submit">保存资料</button>
+            <p class="form-message" aria-live="polite"></p>
+        </form>`;
+    const form = body.querySelector('form');
+    form.elements.username.value = user.username;
+    form.elements.displayName.value = user.displayName || '';
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const message = form.querySelector('.form-message');
+        const submitButton = form.querySelector('button[type="submit"]');
+        const normalizedUsername = form.elements.username.value.trim().toLowerCase();
+        if (normalizedUsername !== user.username && !window.confirm(`确认将用户名 ${user.username} 改为 ${normalizedUsername}？该账户当前登录会立即失效。`)) return;
+        submitButton.disabled = true;
+        message.textContent = '';
+        try {
+            await apiRequest(`/api/admin/users/${user.id}`, {
+                method: 'PATCH',
+                body: JSON.stringify({
+                    username: form.elements.username.value,
+                    displayName: form.elements.displayName.value
+                })
+            });
+        } catch (error) {
+            message.textContent = error.message;
+            submitButton.disabled = false;
+            return;
+        }
+        close();
+        try { await onSaved(); } catch (error) { window.alert(error.message); }
+    });
+    window.setTimeout(() => form.elements.username.focus(), 0);
 }
 
 async function openAccountDialog() {
@@ -140,6 +180,10 @@ async function openAdminDialog() {
             });
             actions.append(reset);
             if (user.id !== currentAuth.user.id) {
+                const edit = document.createElement('button');
+                edit.type = 'button'; edit.className = 'secondary-btn compact-btn'; edit.textContent = '编辑资料';
+                edit.addEventListener('click', () => openEditUserDialog(user, render));
+                actions.prepend(edit);
                 const roleToggle = document.createElement('button');
                 roleToggle.type = 'button'; roleToggle.className = 'secondary-btn compact-btn';
                 roleToggle.textContent = user.isAdmin ? '改为普通账户' : '设为管理员';

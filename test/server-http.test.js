@@ -251,6 +251,73 @@ test('allows administrators to promote and demote accounts without risking the l
   });
 });
 
+test('allows administrators to edit other account identities with validation and session revocation', async () => {
+  await withServer(async (baseUrl, _databasePath, application) => {
+    const admin = await login(baseUrl);
+    const accountId = await createAccount(baseUrl, admin, 'profileuser');
+    const account = await activateAccount(baseUrl, 'profileuser');
+
+    const displayNameUpdate = await api(baseUrl, admin, `/api/admin/users/${accountId}`, {
+      method: 'PATCH', body: { displayName: '  Updated Profile  ' }
+    });
+    assert.equal(displayNameUpdate.status, 204);
+    const activeSession = await api(baseUrl, account, '/api/auth/session');
+    assert.equal(activeSession.status, 200);
+    assert.equal((await activeSession.json()).user.displayName, 'Updated Profile');
+
+    const invalidUsername = await api(baseUrl, admin, `/api/admin/users/${accountId}`, {
+      method: 'PATCH', body: { username: 'not valid!' }
+    });
+    assert.equal(invalidUsername.status, 400);
+    assert.equal((await invalidUsername.json()).code, 'invalid_username');
+
+    const duplicateId = await createAccount(baseUrl, admin, 'takenname');
+    const duplicateUsername = await api(baseUrl, admin, `/api/admin/users/${accountId}`, {
+      method: 'PATCH', body: { username: 'TAKENNAME' }
+    });
+    assert.equal(duplicateUsername.status, 409);
+    assert.equal((await duplicateUsername.json()).code, 'account_unavailable');
+
+    const selfUpdate = await api(baseUrl, admin, `/api/admin/users/${admin.user.id}`, {
+      method: 'PATCH', body: { displayName: 'New Administrator' }
+    });
+    assert.equal(selfUpdate.status, 409);
+    assert.equal((await selfUpdate.json()).code, 'cannot_edit_self_identity');
+
+    const nonAdminUpdate = await api(baseUrl, account, `/api/admin/users/${duplicateId}`, {
+      method: 'PATCH', body: { displayName: 'Not Allowed' }
+    });
+    assert.equal(nonAdminUpdate.status, 404);
+
+    const usernameUpdate = await api(baseUrl, admin, `/api/admin/users/${accountId}`, {
+      method: 'PATCH', body: { username: 'Profile.User', displayName: '   ' }
+    });
+    assert.equal(usernameUpdate.status, 204);
+    assert.equal((await api(baseUrl, account, '/api/auth/session')).status, 401);
+
+    const oldUsernameLogin = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: TEST_ORIGIN },
+      body: JSON.stringify({ username: 'profileuser', password: 'profileuser permanent password 2026' })
+    });
+    assert.equal(oldUsernameLogin.status, 401);
+
+    const renamedAccount = await login(baseUrl, 'profile.user', 'profileuser permanent password 2026');
+    assert.equal(renamedAccount.user.username, 'profile.user');
+    assert.equal(renamedAccount.user.displayName, 'profile.user');
+
+    const users = await (await api(baseUrl, admin, '/api/admin/users')).json();
+    assert.equal(users.find((user) => user.id === accountId).username, 'profile.user');
+    const auditRow = application.store.db.prepare("SELECT metadata_json FROM security_audit_events WHERE event_type = 'user_updated' AND target_user_id = ? ORDER BY id DESC LIMIT 1").get(accountId);
+    assert.deepEqual(JSON.parse(auditRow.metadata_json), {
+      active: true,
+      isAdmin: false,
+      before: { username: 'profileuser', displayName: 'Updated Profile' },
+      after: { username: 'profile.user', displayName: 'profile.user' }
+    });
+  });
+});
+
 test('enforces owner editor viewer permissions and revocable anonymous sharing', async () => {
   await withServer(async (baseUrl) => {
     const admin = await login(baseUrl);
