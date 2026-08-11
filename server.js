@@ -5,6 +5,7 @@ const path = require('node:path');
 
 const {
   LoginRateLimiter,
+  RegistrationRateLimiter,
   deriveCsrfToken,
   hashPassword,
   hashTemporaryPassword,
@@ -562,6 +563,25 @@ function createStoryboardStore(databasePath) {
     }
   }
 
+  function registerUser({ username, displayName, passwordHash, source }) {
+    const now = Date.now();
+    try {
+      return transaction(() => {
+        const result = db.prepare(`INSERT INTO users (username, display_name, password_hash, is_admin, is_active, must_change_password, session_version, created_at, updated_at, password_changed_at) VALUES (?, ?, ?, 0, 1, 0, 1, ?, ?, ?)`).run(username, displayName, passwordHash, now, now, now);
+        const id = Number(result.lastInsertRowid);
+        audit('user_self_registered', {
+          actorUserId: id,
+          targetUserId: id,
+          metadata: { source }
+        });
+        return getUserByUsername(username);
+      });
+    } catch (error) {
+      if (String(error.message).includes('UNIQUE')) throw new HttpError(409, 'Account is unavailable', 'account_unavailable');
+      throw error;
+    }
+  }
+
   function updateUser(actor, targetUserId, payload) {
     const target = db.prepare('SELECT * FROM users WHERE id = ?').get(targetUserId);
     if (!target) throw new HttpError(404, 'Account not found', 'account_not_found');
@@ -638,7 +658,7 @@ function createStoryboardStore(databasePath) {
     acquireLock, heartbeatLock, releaseLock, saveProject, deleteProject,
     listMembers, addOrUpdateMember, removeMember, transferOwnership,
     listShareLinks, createShareLink, revokeShareLink, getShare, getSharedProject,
-    listUsers, createUser, updateUser, resetUserPassword, changePassword,
+    listUsers, createUser, registerUser, updateUser, resetUserPassword, changePassword,
     close() { db.close(); }
   };
 }
@@ -708,7 +728,9 @@ function createStoryboardApplication({
   allowedHosts = allowedOrigins.map((origin) => { try { return new URL(origin).host; } catch { return ''; } }).filter(Boolean),
   secureCookies = publicOrigin.startsWith('https://'),
   passwordParams = {},
-  loginRateLimiter = new LoginRateLimiter()
+  loginRateLimiter = new LoginRateLimiter(),
+  registrationRateLimiter = new RegistrationRateLimiter(),
+  registrationEnabled = process.env.STORYBOARD_ALLOW_REGISTRATION !== '0'
 } = {}) {
   const store = createStoryboardStore(databasePath);
 
@@ -760,6 +782,38 @@ function createStoryboardApplication({
 
     try {
       if (request.method === 'GET' && url.pathname === '/api/health') return sendJson(response, 200, { ok: true, service: 'card-storyboard', schemaVersion: SCHEMA_VERSION });
+
+      if (request.method === 'GET' && url.pathname === '/api/auth/config') {
+        return sendJson(response, 200, { registrationEnabled });
+      }
+
+      if (url.pathname === '/api/auth/register' && request.method === 'POST') {
+        if (!registrationEnabled) throw new HttpError(403, 'Registration is disabled', 'registration_disabled');
+        validateRequestOrigin(request);
+        const ip = requestIp(request);
+        const rate = registrationRateLimiter.consume(ip);
+        if (!rate.allowed) throw new HttpError(429, 'Too many registration attempts', 'registration_rate_limited', null, { 'Retry-After': String(rate.retryAfterSeconds) });
+        const payload = await readJson(request);
+        const username = normalizeUsername(payload.username);
+        if (!username) throw new HttpError(400, 'Username format is invalid', 'invalid_username');
+        if (typeof payload.displayName !== 'string') throw new HttpError(400, 'Display name is required', 'invalid_display_name');
+        const displayName = payload.displayName.trim();
+        if (!displayName || Array.from(displayName).length > 80) throw new HttpError(400, 'Display name must contain 1 to 80 characters', 'invalid_display_name');
+        if (!validatePassword(payload.password)) throw new HttpError(400, 'Password must contain 12 to 128 characters', 'invalid_password');
+        if (store.getUserByUsername(username)) throw new HttpError(409, 'Account is unavailable', 'account_unavailable');
+        const user = store.registerUser({
+          username,
+          displayName,
+          passwordHash: await hashPassword(payload.password, passwordParams),
+          source: stableHash(ip)
+        });
+        const rawToken = randomToken();
+        const csrfToken = deriveCsrfToken(rawToken);
+        store.createSession(user, rawToken, csrfToken, request.headers['user-agent'] || '');
+        store.audit('login_succeeded', { actorUserId: user.id, metadata: { source: stableHash(ip), via: 'registration' } });
+        const cookie = serializeCookie(SESSION_COOKIE, rawToken, { secure: secureCookies, maxAge: SESSION_ABSOLUTE_MS / 1000 });
+        return sendJson(response, 201, { user: store.publicUser(user), csrfToken, insecureHttp: !secureCookies }, { 'Set-Cookie': cookie });
+      }
 
       if (url.pathname === '/api/auth/login' && request.method === 'POST') {
         validateRequestOrigin(request);

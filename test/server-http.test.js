@@ -50,7 +50,7 @@ async function initialize(databasePath) {
   return setupDatabase({ databasePath, username: 'admin', displayName: 'Administrator', passwordHash });
 }
 
-async function withServer(run, databaseInitializer = initialize) {
+async function withServer(run, databaseInitializer = initialize, applicationOptions = {}) {
   const directory = mkdtempSync(path.join(tmpdir(), 'card-storyboard-http-'));
   const databasePath = path.join(directory, 'storyboard.db');
   await databaseInitializer(databasePath);
@@ -60,7 +60,8 @@ async function withServer(run, databaseInitializer = initialize) {
     publicOrigin: TEST_ORIGIN,
     allowedOrigins: [TEST_ORIGIN],
     allowedHosts: ['127.0.0.1'],
-    passwordParams: TEST_PASSWORD_PARAMS
+    passwordParams: TEST_PASSWORD_PARAMS,
+    ...applicationOptions
   });
   await new Promise((resolve) => application.server.listen(0, '127.0.0.1', resolve));
   const address = application.server.address();
@@ -83,6 +84,14 @@ async function login(baseUrl, username = 'admin', password = TEST_PASSWORD) {
   const setCookie = response.headers.get('set-cookie');
   const cookie = setCookie.split(';', 1)[0];
   return { cookie, setCookie, csrf: payload.csrfToken, user: payload.user };
+}
+
+async function register(baseUrl, body, headers = {}) {
+  return fetch(`${baseUrl}/api/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: TEST_ORIGIN, ...headers },
+    body: JSON.stringify(body)
+  });
 }
 
 function api(baseUrl, session, pathname, options = {}) {
@@ -215,6 +224,81 @@ test('authenticates with HttpOnly session and enforces CSRF, edit locks and proj
     assert.equal(logout.status, 204);
     assert.equal((await fetch(`${baseUrl}/api/auth/session`, { headers: { Cookie: admin.cookie } })).status, 401);
   });
+});
+
+test('allows self-registration with an immediate restricted session and enforces validation and rate limits', async () => {
+  await withServer(async (baseUrl, _databasePath, application) => {
+    const configResponse = await fetch(`${baseUrl}/api/auth/config`);
+    assert.equal(configResponse.status, 200);
+    assert.deepEqual(await configResponse.json(), { registrationEnabled: true });
+
+    const registration = await register(baseUrl, {
+      username: 'New.User',
+      displayName: '  New Storyboard User  ',
+      password: 'new user password 2026'
+    });
+    const payload = await registration.json();
+    assert.equal(registration.status, 201, JSON.stringify(payload));
+    assert.equal(payload.user.username, 'new.user');
+    assert.equal(payload.user.displayName, 'New Storyboard User');
+    assert.equal(payload.user.isAdmin, false);
+    assert.equal(payload.user.isActive, true);
+    assert.equal(payload.user.mustChangePassword, false);
+    assert.equal(typeof payload.csrfToken, 'string');
+    assert.match(registration.headers.get('set-cookie'), /storyboard_session=.*HttpOnly.*SameSite=Lax/);
+
+    const account = {
+      cookie: registration.headers.get('set-cookie').split(';', 1)[0],
+      csrf: payload.csrfToken,
+      user: payload.user
+    };
+    const session = await api(baseUrl, account, '/api/auth/session');
+    assert.equal(session.status, 200);
+    assert.equal((await session.json()).user.username, 'new.user');
+    assert.deepEqual(await (await api(baseUrl, account, '/api/projects')).json(), []);
+    assert.equal((await api(baseUrl, account, '/api/projects', { method: 'POST', body: { name: 'My first project' } })).status, 201);
+
+    const auditRow = application.store.db.prepare("SELECT actor_user_id, target_user_id, metadata_json FROM security_audit_events WHERE event_type = 'user_self_registered' ORDER BY id DESC LIMIT 1").get();
+    assert.equal(auditRow.actor_user_id, payload.user.id);
+    assert.equal(auditRow.target_user_id, payload.user.id);
+    assert.match(JSON.parse(auditRow.metadata_json).source, /^[a-f0-9]{64}$/);
+
+    const duplicate = await register(baseUrl, { username: 'NEW.USER', displayName: 'Duplicate', password: 'duplicate password 2026' });
+    assert.equal(duplicate.status, 409);
+    assert.equal((await duplicate.json()).code, 'account_unavailable');
+
+    const invalidUsername = await register(baseUrl, { username: 'not valid!', displayName: 'Invalid', password: 'invalid password 2026' });
+    assert.equal(invalidUsername.status, 400);
+    assert.equal((await invalidUsername.json()).code, 'invalid_username');
+
+    const invalidDisplayName = await register(baseUrl, { username: 'validname', displayName: '   ', password: 'invalid display password' });
+    assert.equal(invalidDisplayName.status, 400);
+    assert.equal((await invalidDisplayName.json()).code, 'invalid_display_name');
+
+    const invalidPassword = await register(baseUrl, { username: 'anothername', displayName: 'Another', password: 'short' });
+    assert.equal(invalidPassword.status, 400);
+    assert.equal((await invalidPassword.json()).code, 'invalid_password');
+
+    const rateLimited = await register(baseUrl, { username: 'ratelimited', displayName: 'Rate Limited', password: 'rate limited password' });
+    assert.equal(rateLimited.status, 429);
+    assert.equal((await rateLimited.json()).code, 'registration_rate_limited');
+    assert.ok(Number(rateLimited.headers.get('retry-after')) > 0);
+
+    const crossSite = await register(baseUrl, { username: 'crosssite', displayName: 'Cross Site', password: 'cross site password' }, { Origin: 'http://attacker.test' });
+    assert.equal(crossSite.status, 403);
+    assert.equal((await crossSite.json()).code, 'origin_rejected');
+  });
+});
+
+test('can disable public self-registration without affecting login', async () => {
+  await withServer(async (baseUrl) => {
+    const config = await fetch(`${baseUrl}/api/auth/config`);
+    assert.deepEqual(await config.json(), { registrationEnabled: false });
+    const disabled = await register(baseUrl, { username: 'closeduser', displayName: 'Closed User', password: 'closed user password' });
+    assert.equal(disabled.status, 403);
+    assert.equal((await disabled.json()).code, 'registration_disabled');
+    assert.equal((await login(baseUrl)).user.username, 'admin');
+  }, initialize, { registrationEnabled: false });
 });
 
 test('allows administrators to promote and demote accounts without risking the last administrator', async () => {

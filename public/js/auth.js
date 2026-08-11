@@ -7,46 +7,133 @@ function setAppViewsHidden(hidden) {
     document.getElementById('editor-view')?.classList.toggle('hidden', hidden);
 }
 
-function showLogin(message = '') {
+async function showLogin(message = '') {
     const authView = document.getElementById('auth-view');
-    const form = document.getElementById('login-form');
-    const error = document.getElementById('login-error');
+    const loginForm = document.getElementById('login-form');
+    const registrationForm = document.getElementById('registration-form');
+    const loginError = document.getElementById('login-error');
+    const registrationError = document.getElementById('registration-error');
+    const title = document.getElementById('auth-title');
+    const description = document.getElementById('auth-description');
+    const switcher = document.getElementById('auth-switch');
+    const switchLabel = switcher.querySelector('span');
+    const showRegistrationButton = document.getElementById('show-registration-btn');
+    const showLoginButton = document.getElementById('show-login-btn');
     authView.classList.remove('hidden');
     setAppViewsHidden(true);
-    error.textContent = message;
+    loginError.textContent = message;
+
+    let registrationEnabled = false;
+    try {
+        const config = await apiRequest('/api/auth/config');
+        registrationEnabled = Boolean(config.registrationEnabled);
+    } catch {
+        // Keep login available if public auth configuration cannot be loaded.
+    }
+    switcher.classList.toggle('hidden', !registrationEnabled);
+
     return new Promise((resolve) => {
-        const submit = async (event) => {
+        const setMode = (mode) => {
+            const registering = mode === 'registration' && registrationEnabled;
+            loginForm.classList.toggle('hidden', registering);
+            registrationForm.classList.toggle('hidden', !registering);
+            showRegistrationButton.classList.toggle('hidden', registering);
+            showLoginButton.classList.toggle('hidden', !registering);
+            switchLabel.textContent = registering ? '已经有账户？' : '还没有账户？';
+            title.textContent = registering ? '创建卡片分镜账户' : '登录卡片分镜';
+            description.textContent = registering
+                ? '创建一个普通账户，开始整理自己的分镜本。'
+                : '登录已有账户，继续整理你的分镜本。';
+            loginError.textContent = registering ? '' : loginError.textContent;
+            registrationError.textContent = '';
+            window.setTimeout(() => (registering ? registrationForm : loginForm).elements.username.focus(), 0);
+        };
+
+        const completeAuthentication = (payload) => {
+            setCsrfToken(payload.csrfToken);
+            authView.classList.add('hidden');
+            loginForm.removeEventListener('submit', submitLogin);
+            registrationForm.removeEventListener('submit', submitRegistration);
+            showRegistrationButton.removeEventListener('click', showRegistration);
+            showLoginButton.removeEventListener('click', showLogin);
+            if (window.location.pathname === '/login') {
+                const next = new URLSearchParams(window.location.search).get('next');
+                const safeNext = next && next.startsWith('/') && !next.startsWith('//') ? next : '/';
+                window.history.replaceState(null, '', safeNext);
+            }
+            resolve({ mode: 'authenticated', ...payload });
+        };
+
+        const submitLogin = async (event) => {
             event.preventDefault();
-            error.textContent = '';
-            const submitButton = form.querySelector('button[type="submit"]');
+            loginError.textContent = '';
+            const submitButton = loginForm.querySelector('button[type="submit"]');
             submitButton.disabled = true;
             try {
                 const payload = await apiRequest('/api/auth/login', {
                     method: 'POST',
                     body: JSON.stringify({
-                        username: form.elements.username.value,
-                        password: form.elements.password.value
+                        username: loginForm.elements.username.value,
+                        password: loginForm.elements.password.value
                     })
                 });
-                setCsrfToken(payload.csrfToken);
-                authView.classList.add('hidden');
-                form.removeEventListener('submit', submit);
-                if (window.location.pathname === '/login') {
-                    const next = new URLSearchParams(window.location.search).get('next');
-                    const safeNext = next && next.startsWith('/') && !next.startsWith('//') ? next : '/';
-                    window.history.replaceState(null, '', safeNext);
-                }
-                resolve({ mode: 'authenticated', ...payload });
+                completeAuthentication(payload);
             } catch (requestError) {
-                error.textContent = requestError.status === 429
+                loginError.textContent = requestError.status === 429
                     ? '登录尝试过多，请稍后再试。'
                     : '用户名或密码错误。';
             } finally {
                 submitButton.disabled = false;
             }
         };
-        form.addEventListener('submit', submit);
-        window.setTimeout(() => form.elements.username.focus(), 0);
+
+        const submitRegistration = async (event) => {
+            event.preventDefault();
+            registrationError.textContent = '';
+            if (registrationForm.elements.password.value !== registrationForm.elements.confirmPassword.value) {
+                registrationError.textContent = '两次输入的密码不一致。';
+                return;
+            }
+            const submitButton = registrationForm.querySelector('button[type="submit"]');
+            submitButton.disabled = true;
+            try {
+                const payload = await apiRequest('/api/auth/register', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        username: registrationForm.elements.username.value,
+                        displayName: registrationForm.elements.displayName.value,
+                        password: registrationForm.elements.password.value
+                    })
+                });
+                completeAuthentication(payload);
+            } catch (requestError) {
+                const messages = {
+                    account_unavailable: '这个用户名已被使用，请换一个。',
+                    invalid_username: '用户名格式不正确。',
+                    invalid_display_name: '请输入 1–80 个字符的显示名称。',
+                    invalid_password: '密码需包含 12–128 个字符。',
+                    registration_rate_limited: '注册尝试过多，请稍后再试。',
+                    registration_disabled: '当前已关闭自助注册。'
+                };
+                registrationError.textContent = messages[requestError.code] || '账户创建失败，请稍后再试。';
+                if (requestError.code === 'registration_disabled') {
+                    registrationEnabled = false;
+                    switcher.classList.add('hidden');
+                    setMode('login');
+                    loginError.textContent = messages.registration_disabled;
+                }
+            } finally {
+                submitButton.disabled = false;
+            }
+        };
+
+        const showRegistration = () => setMode('registration');
+        const showLogin = () => setMode('login');
+        loginForm.addEventListener('submit', submitLogin);
+        registrationForm.addEventListener('submit', submitRegistration);
+        showRegistrationButton.addEventListener('click', showRegistration);
+        showLoginButton.addEventListener('click', showLogin);
+        setMode('login');
     });
 }
 
