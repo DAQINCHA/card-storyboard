@@ -110,6 +110,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const PRINT_PAGE_STYLE_ID = 'dynamic-print-page-style';
     const PRELOAD_HOME_CLASS = 'preload-view-home';
     const PRELOAD_EDITOR_CLASS = 'preload-view-editor';
+    const DEFAULT_NEW_PROJECT_SHOT_COUNT = 5;
     const PINNED_PROJECTS_KEY = 'storyboard:pinned-project-ids';
     const PRESET_SCENE_COLOR_ROWS = buildPresetSceneColorRows();
     let pinnedProjectIds = loadPinnedProjectIds();
@@ -2221,7 +2222,7 @@ document.addEventListener('DOMContentLoaded', () => {
             shotCount = 0;
             const shots = Array.isArray(project.shots) ? project.shots : [];
             if (shots.length === 0) {
-                for (let i = 0; i < 4; i += 1) {
+                for (let i = 0; i < DEFAULT_NEW_PROJECT_SHOT_COUNT; i += 1) {
                     addShot(false);
                 }
             } else {
