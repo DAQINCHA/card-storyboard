@@ -24,14 +24,28 @@
     <div id="auth-view" class="auth-view hidden">
         <section class="auth-card">
             <img class="brand-mark" src="/icons/logo-mark.svg" alt="" width="52" height="52">
-            <h1>登录卡片分镜</h1>
-            <p>使用管理员为你创建的账户登录。</p>
+            <h1 id="auth-title">登录卡片分镜</h1>
+            <p id="auth-description">登录已有账户，继续整理你的分镜本。</p>
             <form id="login-form" class="stack-form">
                 <label>用户名<input name="username" autocomplete="username" required></label>
                 <label>密码<input name="password" type="password" autocomplete="current-password" required></label>
                 <button class="primary-btn" type="submit">登录</button>
                 <p id="login-error" class="form-message" aria-live="polite"></p>
             </form>
+            <form id="registration-form" class="stack-form hidden">
+                <label>用户名<input name="username" pattern="[A-Za-z0-9][A-Za-z0-9._-]{2,31}" autocomplete="username" required></label>
+                <p class="field-note">3–32 位，以英文或数字开头，可含点、下划线和连字符。</p>
+                <label>显示名称<input name="displayName" maxlength="80" autocomplete="name" required></label>
+                <label>密码<input name="password" type="password" minlength="12" maxlength="128" autocomplete="new-password" required></label>
+                <label>确认密码<input name="confirmPassword" type="password" minlength="12" maxlength="128" autocomplete="new-password" required></label>
+                <button class="primary-btn" type="submit">创建账户</button>
+                <p id="registration-error" class="form-message" aria-live="polite"></p>
+            </form>
+            <p id="auth-switch" class="auth-switch hidden">
+                <span>还没有账户？</span>
+                <button id="show-registration-btn" type="button">创建账户</button>
+                <button id="show-login-btn" class="hidden" type="button">返回登录</button>
+            </p>
         </section>
     </div>
     <div id="home-view" class="home-view">

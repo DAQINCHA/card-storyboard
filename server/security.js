@@ -220,10 +220,41 @@ class LoginRateLimiter {
   }
 }
 
+class RegistrationRateLimiter {
+  constructor({ windowMs = 15 * 60 * 1000, limit = 5 } = {}) {
+    this.windowMs = windowMs;
+    this.limit = limit;
+    this.entries = new Map();
+  }
+
+  consume(ip, now = Date.now()) {
+    const key = String(ip || 'unknown');
+    let entry = this.entries.get(key);
+    if (!entry || now - entry.startedAt >= this.windowMs) {
+      entry = { startedAt: now, attempts: 0 };
+      this.entries.set(key, entry);
+    }
+    if (entry.attempts >= this.limit) {
+      return {
+        allowed: false,
+        retryAfterSeconds: Math.max(1, Math.ceil((entry.startedAt + this.windowMs - now) / 1000))
+      };
+    }
+    entry.attempts += 1;
+    if (this.entries.size > 5000) {
+      for (const [entryKey, candidate] of this.entries) {
+        if (now - candidate.startedAt >= this.windowMs) this.entries.delete(entryKey);
+      }
+    }
+    return { allowed: true, retryAfterSeconds: 0 };
+  }
+}
+
 module.exports = {
   DEFAULT_SCRYPT_PARAMS,
   DEFAULT_TEMPORARY_PASSWORD,
   LoginRateLimiter,
+  RegistrationRateLimiter,
   deriveCsrfToken,
   hashPassword,
   hashTemporaryPassword,

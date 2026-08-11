@@ -1970,6 +1970,30 @@ body.is-sorting {
     color: var(--text-muted);
 }
 
+.auth-switch {
+    margin: 1rem 0 0;
+    text-align: center;
+}
+
+.auth-switch button {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--primary-color);
+    font: inherit;
+    font-weight: 800;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 0.18em;
+}
+
+.field-note {
+    margin: -0.55rem 0 0;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    line-height: 1.45;
+}
+
 .stack-form {
     display: grid;
     gap: 0.9rem;
@@ -2725,6 +2749,11 @@ body.is-sorting {
         margin-bottom: 0.75rem;
         border-bottom: 2px solid var(--border-color);
         width: 100%;
+    }
+
+    .print-page .project-header::before {
+        content: none !important;
+        display: none !important;
     }
 
     .header-input {
