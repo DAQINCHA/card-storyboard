@@ -1,7 +1,7 @@
 services:
   card-storyboard:
     image: node:22-bookworm-slim
-    container_name: card-storyboard
+    container_name: card-storyboard-team
     restart: unless-stopped
 
     working_dir: /app
