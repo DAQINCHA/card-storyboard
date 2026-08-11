@@ -1,4 +1,6 @@
-import { apiRequest } from './js/api.js';
+import { ApiError, apiRequest } from './js/api.js';
+import { bootstrapAccess } from './js/auth.js';
+import { openSharingDialog } from './js/sharing.js';
 import {
     DEFAULT_SCENE_HEADER_COLOR,
     DEFAULT_TEXT_COLOR_TOKEN,
@@ -34,7 +36,14 @@ import {
     syncBrowserHistory
 } from './js/router.js';
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+    const accessContext = await bootstrapAccess();
+    if (!accessContext) {
+        document.documentElement.classList.remove('preload-view-home', 'preload-view-editor');
+        return;
+    }
+    const isShareMode = accessContext.mode === 'share';
+    const appUser = accessContext.user || null;
     const homeView = document.getElementById('home-view');
     const editorView = document.getElementById('editor-view');
     const projectsGrid = document.getElementById('projects-grid');
@@ -51,6 +60,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const multiSelectToggleBtn = document.getElementById('multi-select-toggle-btn');
     const backToHomeBtn = document.getElementById('back-to-home-btn');
     const aspectRatioSelect = document.getElementById('aspect-ratio-select');
+    const projectAccessBadge = document.getElementById('project-access-badge');
+    const manageSharingBtn = document.getElementById('manage-sharing-btn');
+    const editLockBanner = document.getElementById('edit-lock-banner');
     const appContainer = document.querySelector('.app-container');
     const projectHeader = document.querySelector('.project-header');
     const headerTextInputs = projectHeader ? projectHeader.querySelectorAll('.flex-1 .header-input') : [];
@@ -98,6 +110,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let projectsCache = [];
     let currentProjectId = null;
+    let currentProject = null;
+    let currentProjectVersion = null;
+    let currentCapabilities = {};
+    let editLeaseToken = '';
+    let editLockHeartbeatTimer = null;
+    let editorReadOnly = true;
+    let saveConflictActive = false;
     let shotCount = 0;
     let isPrintLayoutReady = false;
     let hoveredImageUploadContext = null;
@@ -110,7 +129,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const PRELOAD_HOME_CLASS = 'preload-view-home';
     const PRELOAD_EDITOR_CLASS = 'preload-view-editor';
     const DEFAULT_NEW_PROJECT_SHOT_COUNT = 5;
-    const PINNED_PROJECTS_KEY = 'storyboard:pinned-project-ids';
+    const PINNED_PROJECTS_KEY = `storyboard:pinned-project-ids:${appUser?.id || 'anonymous'}`;
     const PRESET_SCENE_COLOR_ROWS = buildPresetSceneColorRows();
     let pinnedProjectIds = loadPinnedProjectIds();
     let sceneDividerTriggerEl = null;
@@ -126,6 +145,142 @@ document.addEventListener('DOMContentLoaded', () => {
     let activeTextColorField = null;
     let lastTextColorPointer = null;
     let clipboardToastHideTimer = null;
+
+    function setLockBanner(message = '', options = {}) {
+        if (!editLockBanner) return;
+        editLockBanner.innerHTML = '';
+        editLockBanner.classList.toggle('hidden', !message);
+        if (!message) return;
+        const text = document.createElement('span');
+        text.textContent = message;
+        editLockBanner.appendChild(text);
+        if (options.force) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'secondary-btn compact-btn';
+            button.textContent = '强制接管';
+            button.addEventListener('click', () => acquireCurrentProjectLock(true));
+            editLockBanner.appendChild(button);
+        }
+        if (options.reload) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'secondary-btn compact-btn';
+            button.textContent = '重新载入服务器版本';
+            button.addEventListener('click', () => openProject(currentProjectId, { flushSave: false, replaceHistory: true }));
+            editLockBanner.appendChild(button);
+        }
+        if (options.saveCopy) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'secondary-btn compact-btn';
+            button.textContent = '将本地内容另存为副本';
+            button.addEventListener('click', saveLocalStateAsCopy);
+            editLockBanner.appendChild(button);
+        }
+    }
+
+    function applyEditorAccess() {
+        const canEdit = Boolean(currentCapabilities.canEdit && editLeaseToken && !saveConflictActive);
+        editorReadOnly = !canEdit;
+        editorView.classList.toggle('is-readonly', editorReadOnly);
+        if (projectInput) projectInput.readOnly = editorReadOnly;
+        if (aspectRatioSelect) aspectRatioSelect.disabled = editorReadOnly;
+        [addShotBtn, addDropdownToggle, multiSelectToggleBtn].forEach((button) => { if (button) button.disabled = editorReadOnly; });
+        storyboardGrid.querySelectorAll('.rich-text-input').forEach((field) => field.setAttribute('contenteditable', canEdit ? 'true' : 'false'));
+        storyboardGrid.querySelectorAll('input, button').forEach((control) => { control.disabled = editorReadOnly; });
+        if (storyboardSortable) storyboardSortable.option('disabled', editorReadOnly || isMultiSelectMode);
+        if (projectAccessBadge) projectAccessBadge.textContent = currentProject?.accessRole || '';
+        if (manageSharingBtn) manageSharingBtn.classList.toggle('hidden', !currentCapabilities.canManageMembers);
+    }
+
+    function stopLockHeartbeat() {
+        if (editLockHeartbeatTimer) clearInterval(editLockHeartbeatTimer);
+        editLockHeartbeatTimer = null;
+    }
+
+    function startLockHeartbeat() {
+        stopLockHeartbeat();
+        if (!editLeaseToken || !currentProjectId) return;
+        editLockHeartbeatTimer = setInterval(async () => {
+            try {
+                await apiRequest(`/api/projects/${currentProjectId}/lock`, {
+                    method: 'PATCH', headers: { 'X-Edit-Lease': editLeaseToken }
+                });
+            } catch (error) {
+                if (error.status === 423 || error.status === 404) {
+                    editLeaseToken = '';
+                    saveConflictActive = true;
+                    stopLockHeartbeat();
+                    setLockBanner('编辑权已失效，本地内容不会继续自动保存。', { reload: true });
+                    applyEditorAccess();
+                }
+            }
+        }, 15000);
+    }
+
+    async function releaseCurrentLock() {
+        stopLockHeartbeat();
+        const projectId = currentProjectId;
+        const lease = editLeaseToken;
+        editLeaseToken = '';
+        if (!projectId || !lease || isShareMode) return;
+        try {
+            await apiRequest(`/api/projects/${projectId}/lock`, {
+                method: 'DELETE', headers: { 'X-Edit-Lease': lease }, keepalive: true
+            });
+        } catch {
+            // The lease will expire automatically.
+        }
+    }
+
+    async function acquireCurrentProjectLock(force = false) {
+        if (!currentProjectId || !currentCapabilities.canEdit || isShareMode) return false;
+        try {
+            const lock = await apiRequest(`/api/projects/${currentProjectId}/lock`, {
+                method: 'POST', body: JSON.stringify({ force })
+            });
+            editLeaseToken = lock.leaseToken;
+            currentProjectVersion = lock.version;
+            saveConflictActive = false;
+            setLockBanner('你正在编辑此项目。');
+            applyEditorAccess();
+            startLockHeartbeat();
+            return true;
+        } catch (error) {
+            editLeaseToken = '';
+            const holder = error.details?.displayName || error.details?.username || '另一位用户';
+            setLockBanner(`项目正由 ${holder} 编辑，当前以只读方式打开。`, { force: Boolean(currentCapabilities.canForceLock) });
+            applyEditorAccess();
+            return false;
+        }
+    }
+
+    async function saveLocalStateAsCopy() {
+        if (!currentProjectId || !currentCapabilities.canDuplicate) return;
+        const snapshot = buildStateSnapshot();
+        try {
+            const created = await apiRequest('/api/projects', {
+                method: 'POST',
+                body: JSON.stringify({ name: `${snapshot.name || '未命名项目'} 冲突副本`, sourceProjectId: currentProjectId })
+            });
+            const lock = await apiRequest(`/api/projects/${created.id}/lock`, { method: 'POST', body: '{}' });
+            const saved = await apiRequest(`/api/projects/${created.id}`, {
+                method: 'PUT',
+                headers: { 'X-Edit-Lease': lock.leaseToken },
+                body: JSON.stringify({ ...snapshot, baseVersion: created.version })
+            });
+            currentProjectId = saved.id;
+            editLeaseToken = lock.leaseToken;
+            saveConflictActive = false;
+            applyProjectToEditor(saved);
+            switchToEditor({ syncHistory: true, replaceHistory: false });
+            setLockBanner('本地内容已另存为新项目。');
+            startLockHeartbeat();
+        } catch (error) {
+            alert(error.message || '另存为副本失败。');
+        }
+    }
     function clearPreloadViewClasses() {
         document.documentElement.classList.remove(PRELOAD_HOME_CLASS, PRELOAD_EDITOR_CLASS);
     }
@@ -856,7 +1011,7 @@ document.addEventListener('DOMContentLoaded', () => {
         isMultiSelectMode = nextEnabled;
         storyboardGrid.classList.toggle('is-multi-select', isMultiSelectMode);
         if (storyboardSortable) {
-            storyboardSortable.option('disabled', isMultiSelectMode);
+            storyboardSortable.option('disabled', isMultiSelectMode || editorReadOnly);
         }
         if (!isMultiSelectMode) {
             clearSelectedShotCards();
@@ -1305,7 +1460,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function saveState() {
-        if (isRestoringState || !currentProjectId) {
+        if (isRestoringState || !currentProjectId || editorReadOnly || !editLeaseToken || saveConflictActive) {
             return;
         }
         if (pendingSavePromise) {
@@ -1326,13 +1481,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
         pendingSavePromise = perfMeasureAsync('saveState', async () => {
             const payload = buildStateSnapshot();
+            payload.baseVersion = currentProjectVersion;
             perfMeta.payloadShots = Array.isArray(payload.shots) ? payload.shots.length : 0;
             const body = JSON.stringify(payload);
             perfMeta.bodyBytes = body.length;
             const saved = await apiRequest(`/api/projects/${saveProjectId}`, {
                 method: 'PUT',
+                headers: { 'X-Edit-Lease': editLeaseToken },
                 body
             });
+            currentProjectVersion = saved.version;
+            currentProject = saved;
             perfMeta.savedShots = Array.isArray(saved?.shots) ? saved.shots.length : 0;
             syncSavedImageReferences(payload.shots, saved?.shots, saveProjectId);
 
@@ -1351,11 +1510,25 @@ document.addEventListener('DOMContentLoaded', () => {
                 };
             });
         }, () => perfMeta).catch((error) => {
-            hasUnsavedChanges = true;
             console.error('Save failed:', error);
+            if (error instanceof ApiError && (error.status === 409 || error.status === 423)) {
+                hasUnsavedChanges = true;
+                saveConflictActive = true;
+                editLeaseToken = '';
+                stopLockHeartbeat();
+                setLockBanner(
+                    error.status === 409
+                        ? '服务器上已有更新；已停止自动保存以避免覆盖。'
+                        : '编辑锁已失效；已停止自动保存。',
+                    { reload: true, saveCopy: true }
+                );
+                applyEditorAccess();
+                return;
+            }
+            hasUnsavedChanges = true;
         }).finally(() => {
             pendingSavePromise = null;
-            if (hasUnsavedChanges && !isRestoringState && currentProjectId) {
+            if (hasUnsavedChanges && !isRestoringState && currentProjectId && !saveConflictActive) {
                 scheduleSaveState();
             }
         });
@@ -1364,7 +1537,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function scheduleSaveState() {
-        if (isRestoringState || !currentProjectId) {
+        if (isRestoringState || !currentProjectId || editorReadOnly || saveConflictActive) {
             return;
         }
         hasUnsavedChanges = true;
@@ -1975,16 +2148,32 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function renameProject(projectId, nextName) {
+        let lease = '';
         try {
+            const source = await apiRequest(`/api/projects/${projectId}`);
+            if (!source.capabilities?.canEdit) {
+                throw new Error('你没有编辑此项目的权限。');
+            }
+            const lock = await apiRequest(`/api/projects/${projectId}/lock`, {
+                method: 'POST', body: JSON.stringify({ force: false })
+            });
+            lease = lock.leaseToken;
             await apiRequest(`/api/projects/${projectId}`, {
                 method: 'PUT',
-                body: JSON.stringify({ name: nextName })
+                headers: { 'X-Edit-Lease': lease },
+                body: JSON.stringify({ name: nextName, baseVersion: source.version })
             });
             return true;
         } catch (error) {
             console.error('Rename project failed:', error);
-            alert('修改项目名称失败，请稍后重试。');
+            alert(error.status === 423 ? '项目正在由其他用户编辑，暂时不能重命名。' : (error.message || '修改项目名称失败。'));
             return false;
+        } finally {
+            if (lease) {
+                apiRequest(`/api/projects/${projectId}/lock`, {
+                    method: 'DELETE', headers: { 'X-Edit-Lease': lease }
+                }).catch(() => {});
+            }
         }
     }
 
@@ -2130,13 +2319,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
             });
 
-            title.addEventListener('click', (event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                startInlineProjectRename(project, title);
-            });
+            if (project.capabilities?.canEdit) {
+                title.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    startInlineProjectRename(project, title);
+                });
+            } else {
+                title.classList.add('is-readonly');
+            }
 
             if (deleteBtn) {
+                deleteBtn.classList.toggle('hidden', !project.capabilities?.canDelete);
                 deleteBtn.addEventListener('click', (event) => {
                     event.preventDefault();
                     event.stopPropagation();
@@ -2145,6 +2339,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             if (duplicateBtn) {
+                duplicateBtn.classList.toggle('hidden', !project.capabilities?.canDuplicate);
                 duplicateBtn.addEventListener('click', (event) => {
                     event.preventDefault();
                     event.stopPropagation();
@@ -2202,7 +2397,10 @@ document.addEventListener('DOMContentLoaded', () => {
         setMultiSelectMode(false);
         isRestoringState = true;
         try {
+            currentProject = project;
             currentProjectId = project.id;
+            currentProjectVersion = project.version;
+            currentCapabilities = project.capabilities || {};
             sessionStorage.setItem(PROJECT_STORAGE_KEY, String(project.id));
             if (projectInput) {
                 projectInput.value = project.name || '';
@@ -2237,6 +2435,7 @@ document.addEventListener('DOMContentLoaded', () => {
             hasUnsavedChanges = false;
         } finally {
             isRestoringState = false;
+            applyEditorAccess();
             if (perfState.enabled) {
                 perfMeta.renderedCards = storyboardGrid.querySelectorAll('.shot-card').length;
                 perfMeta.renderedDividers = storyboardGrid.querySelectorAll('.scene-divider').length;
@@ -2260,9 +2459,18 @@ document.addEventListener('DOMContentLoaded', () => {
         if (flushSave) {
             await flushPendingSave();
         }
+        await releaseCurrentLock();
         const project = await apiRequest(`/api/projects/${normalizedProjectId}`);
+        editLeaseToken = '';
+        saveConflictActive = false;
         applyProjectToEditor(project);
         switchToEditor({ syncHistory, replaceHistory });
+        if (project.capabilities?.canEdit) {
+            await acquireCurrentProjectLock(false);
+        } else {
+            setLockBanner(project.accessRole === 'anonymous' ? '匿名只读分享' : '你对该项目拥有只读权限。');
+            applyEditorAccess();
+        }
     }
 
     if (typeof Sortable !== 'undefined') {
@@ -2579,7 +2787,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     document.addEventListener('paste', (e) => {
-        if (isMultiSelectMode) {
+        if (isMultiSelectMode || editorReadOnly) {
             return;
         }
         if (!hoveredImageUploadContext) {
@@ -2699,12 +2907,11 @@ document.addEventListener('DOMContentLoaded', () => {
             flushSave = true
         } = options;
 
-        const savePromise = flushSave
-            ? flushPendingSave()
-            : Promise.resolve();
+        if (isShareMode) return;
+        if (flushSave) await flushPendingSave();
+        await releaseCurrentLock();
         switchToHome({ syncHistory, replaceHistory });
-        const refreshPromise = refreshProjects();
-        await Promise.all([savePromise, refreshPromise]);
+        await refreshProjects();
     }
 
     backToHomeBtn.addEventListener('click', () => {
@@ -2712,6 +2919,11 @@ document.addEventListener('DOMContentLoaded', () => {
             console.error('Navigate home failed:', error);
             alert('返回主页失败，请稍后重试。');
         });
+    });
+
+    if (isShareMode) backToHomeBtn.classList.add('hidden');
+    manageSharingBtn?.addEventListener('click', () => {
+        if (currentProject && currentCapabilities.canManageMembers) openSharingDialog(currentProject);
     });
 
     exportPdfBtn.addEventListener('click', () => {
@@ -2783,7 +2995,9 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             saveState();
         }
+        releaseCurrentLock();
     });
+    window.addEventListener('storyboard-before-logout', () => { releaseCurrentLock(); });
 
     async function applyRoute(route, options = {}) {
         const { syncHistory = true, replaceHistory = false, flushSave = true } = options;
@@ -2845,8 +3059,19 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     syncProjectHeaderWidth();
-    restoreInitialView().catch((error) => {
+    const initialViewPromise = isShareMode
+        ? Promise.resolve().then(() => {
+            editLeaseToken = '';
+            saveConflictActive = false;
+            applyProjectToEditor(accessContext.project);
+            switchToEditor({ syncHistory: false });
+            setLockBanner('匿名只读分享');
+            applyEditorAccess();
+        })
+        : restoreInitialView();
+    initialViewPromise.catch((error) => {
         console.error('Initialize app failed:', error);
+        if (isShareMode) return;
         applyRoute({ view: 'home' }, {
             syncHistory: true,
             replaceHistory: true,

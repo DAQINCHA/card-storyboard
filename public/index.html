@@ -11,38 +11,29 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="卡片分镜">
-    <script>
-        (function () {
-            const PRELOAD_HOME_CLASS = 'preload-view-home';
-            const PRELOAD_EDITOR_CLASS = 'preload-view-editor';
-            let initialClass = PRELOAD_HOME_CLASS;
-
-            try {
-                const projectPathMatch = window.location.pathname.match(/^\/project\/(\d+)\/?$/);
-                if (projectPathMatch) {
-                    const projectId = Number(projectPathMatch[1]);
-                    if (Number.isInteger(projectId) && projectId > 0) {
-                        initialClass = PRELOAD_EDITOR_CLASS;
-                    }
-                }
-            } catch (_error) {
-                initialClass = PRELOAD_HOME_CLASS;
-            }
-
-            document.documentElement.classList.add(initialClass);
-        })();
-    </script>
+    <script src="/js/preload.js"></script>
     <link rel="icon" type="image/svg+xml" href="/icons/app-icon.svg">
     <link rel="icon" type="image/png" sizes="32x32" href="/icons/icon-32.png">
     <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png">
     <link rel="manifest" href="/manifest.webmanifest">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/style.css">
-    <!-- SortableJS for Drag and Drop -->
-    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+    <script src="/vendor/sortable-lite.js" defer></script>
 </head>
 
 <body>
+    <div id="auth-view" class="auth-view hidden">
+        <section class="auth-card">
+            <img class="brand-mark" src="/icons/logo-mark.svg" alt="" width="52" height="52">
+            <h1>登录卡片分镜</h1>
+            <p>使用管理员为你创建的账户登录。</p>
+            <form id="login-form" class="stack-form">
+                <label>用户名<input name="username" autocomplete="username" required></label>
+                <label>密码<input name="password" type="password" autocomplete="current-password" required></label>
+                <button class="primary-btn" type="submit">登录</button>
+                <p id="login-error" class="form-message" aria-live="polite"></p>
+            </form>
+        </section>
+    </div>
     <div id="home-view" class="home-view">
         <section class="home-main">
             <header class="home-header">
@@ -63,6 +54,12 @@
                         </select>
                     </div>
                     <input id="project-search" class="home-search" type="search" placeholder="搜索分镜本...">
+                    <div class="account-actions">
+                        <span id="account-name" class="account-name"></span>
+                        <button id="account-btn" class="secondary-btn compact-btn" type="button">账户</button>
+                        <button id="admin-accounts-btn" class="secondary-btn compact-btn hidden" type="button">管理账户</button>
+                        <button id="logout-btn" class="secondary-btn compact-btn" type="button">退出</button>
+                    </div>
                 </div>
             </header>
 
@@ -113,6 +110,9 @@
                         多选
                     </button>
 
+                    <span id="project-access-badge" class="access-badge"></span>
+                    <button id="manage-sharing-btn" class="secondary-btn hidden" type="button">成员与分享</button>
+
                     <div class="add-btn-group">
                         <button id="add-shot-btn" class="primary-btn btn-left">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -145,6 +145,8 @@
                     </button>
                 </div>
             </header>
+
+            <div id="edit-lock-banner" class="edit-lock-banner hidden" role="status"></div>
 
             <!-- Storyboard Grid -->
             <main class="storyboard-grid" id="storyboard-grid">

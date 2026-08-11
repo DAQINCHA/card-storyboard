@@ -9,6 +9,37 @@ export function plainTextToEditableHtml(value = '') {
     return escapeHtml(value).replace(/\n/g, '<br>');
 }
 
+function sanitizeEditableNode(node, targetDocument) {
+    if (node.nodeType === Node.TEXT_NODE) {
+        return targetDocument.createTextNode(node.textContent || '');
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) {
+        return targetDocument.createDocumentFragment();
+    }
+    const tag = node.tagName.toLowerCase();
+    if (['script', 'style', 'iframe', 'object', 'embed', 'svg', 'math', 'form', 'input', 'button'].includes(tag)) {
+        return targetDocument.createDocumentFragment();
+    }
+    const container = ['br', 'span', 'div'].includes(tag)
+        ? targetDocument.createElement(tag)
+        : targetDocument.createDocumentFragment();
+    if (tag === 'span' && node.style?.color) {
+        container.style.color = node.style.color;
+    }
+    if (tag !== 'br') {
+        Array.from(node.childNodes).forEach((child) => container.appendChild(sanitizeEditableNode(child, targetDocument)));
+    }
+    return container;
+}
+
+export function sanitizeEditableHtml(value = '') {
+    const template = document.createElement('template');
+    template.innerHTML = typeof value === 'string' ? value : '';
+    const output = document.createElement('div');
+    Array.from(template.content.childNodes).forEach((node) => output.appendChild(sanitizeEditableNode(node, document)));
+    return output.innerHTML;
+}
+
 export function getEditablePlainText(field) {
     return (field?.textContent || '').replace(/\u00A0/g, ' ');
 }
@@ -17,7 +48,7 @@ export function getEditableFieldHtml(field) {
     if (!field) {
         return '';
     }
-    return field.innerHTML || '';
+    return sanitizeEditableHtml(field.innerHTML || '');
 }
 
 export function cleanupEditableFieldMarkup(field) {
@@ -35,7 +66,7 @@ export function setEditableFieldContent(field, htmlValue = '', plainValue = '') 
     }
 
     if (typeof htmlValue === 'string' && htmlValue.trim()) {
-        field.innerHTML = htmlValue;
+        field.innerHTML = sanitizeEditableHtml(htmlValue);
     } else if (typeof plainValue === 'string' && plainValue) {
         field.innerHTML = plainTextToEditableHtml(plainValue);
     } else {
