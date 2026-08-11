@@ -1893,6 +1893,10 @@ body.is-sorting {
         border-bottom-color: #292821;
     }
 
+    .shot-time-input {
+        border-radius: var(--radius-sm);
+    }
+
     .shot-camera-move,
     .shot-details {
         background: #fffdf8;
