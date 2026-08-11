@@ -71,8 +71,7 @@ body {
 }
 
 .app-container {
-    max-width: 1600px;
-    margin: 0 auto;
+    width: 100%;
 }
 
 .hidden {
@@ -94,6 +93,9 @@ html.preload-view-editor #editor-view.hidden {
 
 .editor-view {
     width: 100%;
+    max-width: 1600px;
+    min-height: 100vh;
+    margin: 0 auto;
     padding: 1.25rem 1.4rem 2rem;
 }
 
@@ -1670,8 +1672,7 @@ body.is-sorting {
         --shadow-lg: 8px 8px 0 rgba(41, 40, 33, 0.9);
     }
 
-    body,
-    .home-main {
+    body {
         background-color: var(--bg-color);
         background-image:
             linear-gradient(rgba(41, 40, 33, 0.035) 1px, transparent 1px),
@@ -1680,11 +1681,12 @@ body.is-sorting {
     }
 
     .home-main {
-        background-color: transparent;
+        background: transparent;
     }
 
     .home-header,
     .project-header {
+        min-height: 85px;
         border: 1.5px solid #292821;
         background: #fffdf8;
         box-shadow: 5px 5px 0 #292821;
@@ -1958,8 +1960,7 @@ body.is-sorting {
         box-shadow: 0 8px 22px rgba(2, 6, 23, 0.45);
     }
 
-    body,
-    .home-main {
+    body {
         background-color: #171814;
         background-image:
             linear-gradient(rgba(240, 234, 220, 0.04) 1px, transparent 1px),
@@ -1968,7 +1969,7 @@ body.is-sorting {
     }
 
     .home-main {
-        background-color: transparent;
+        background: transparent;
     }
 
     .home-header,
