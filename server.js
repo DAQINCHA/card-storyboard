@@ -153,6 +153,11 @@ function toProjectSummary(row, user) {
     shotCount: shots.filter((shot) => !isSceneDividerShot(shot)).length,
     previewImage: firstImage ? buildImageUrl(row.id, normalizeImageId(firstImage.imageId)) : '',
     updatedAt: row.updated_at, version: row.version, accessRole: role,
+    owner: {
+      id: row.owner_id,
+      username: row.owner_username,
+      displayName: row.owner_display_name
+    },
     capabilities: roleCapabilities(row.access_role, user?.isAdmin)
   };
 }
@@ -179,6 +184,28 @@ function createStoryboardStore(databasePath) {
   } catch (error) {
     db.close();
     throw error;
+  }
+  const canonicalAdmin = db.prepare("SELECT id FROM users WHERE username = 'admin' AND is_admin = 1 AND is_active = 1").get();
+  if (!canonicalAdmin) {
+    db.close();
+    throw new Error('Database has no active admin account');
+  }
+  const extraAdmins = db.prepare("SELECT id, username FROM users WHERE username <> 'admin' AND is_admin = 1").all();
+  if (extraAdmins.length) {
+    const now = Date.now();
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      extraAdmins.forEach((user) => {
+        db.prepare('UPDATE users SET is_admin = 0, session_version = session_version + 1, updated_at = ? WHERE id = ?').run(now, user.id);
+        db.prepare(`INSERT INTO security_audit_events (event_type, actor_user_id, target_user_id, metadata_json, created_at) VALUES ('admin_status_reconciled', ?, ?, ?, ?)`)
+          .run(canonicalAdmin.id, user.id, JSON.stringify({ username: user.username, isAdmin: false }), now);
+      });
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      db.close();
+      throw error;
+    }
   }
   const cleanupNow = Date.now();
   db.prepare('DELETE FROM user_sessions WHERE revoked_at IS NOT NULL OR idle_expires_at <= ? OR absolute_expires_at <= ?').run(cleanupNow, cleanupNow);
@@ -218,7 +245,7 @@ function createStoryboardStore(databasePath) {
   function publicUser(row) {
     return row ? {
       id: row.id, username: row.username, displayName: row.display_name,
-      isAdmin: Boolean(row.is_admin), isActive: Boolean(row.is_active),
+      isAdmin: row.username === 'admin' && Boolean(row.is_admin), isActive: Boolean(row.is_active),
       mustChangePassword: Boolean(row.must_change_password)
     } : null;
   }
@@ -249,7 +276,7 @@ function createStoryboardStore(databasePath) {
     }
     return {
       id: row.id, userId: row.user_id, username: row.username, displayName: row.display_name,
-      isAdmin: Boolean(row.is_admin), mustChangePassword: Boolean(row.must_change_password),
+      isAdmin: row.username === 'admin' && Boolean(row.is_admin), mustChangePassword: Boolean(row.must_change_password),
       csrfTokenHash: Buffer.from(row.csrf_token_hash)
     };
   }
@@ -288,13 +315,17 @@ function createStoryboardStore(databasePath) {
 
   function listProjects(user, search, sort) {
     const rows = db.prepare(`
-      SELECT p.id, p.name, p.scene, p.aspect_ratio, p.shots_json, p.updated_at, p.version, pm.role AS access_role
+      SELECT p.id, p.name, p.scene, p.aspect_ratio, p.shots_json, p.updated_at, p.version,
+             pm.role AS access_role, owner.id AS owner_id, owner.username AS owner_username,
+             owner.display_name AS owner_display_name
       FROM projects p LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = ?
+      JOIN project_members ownership ON ownership.project_id = p.id AND ownership.role = 'owner'
+      JOIN users owner ON owner.id = ownership.user_id
       WHERE ? = 1 OR pm.user_id IS NOT NULL
     `).all(user.id, user.isAdmin ? 1 : 0);
     const query = String(search || '').toLowerCase();
     let result = rows.map((row) => toProjectSummary(row, user));
-    if (query) result = result.filter((item) => `${item.name} ${item.scene}`.toLowerCase().includes(query));
+    if (query) result = result.filter((item) => `${item.name} ${item.scene} ${item.owner.displayName} ${item.owner.username}`.toLowerCase().includes(query));
     if (sort === 'name_asc') result.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
     else if (sort === 'updated_asc') result.sort((a, b) => new Date(a.updatedAt) - new Date(b.updatedAt));
     else result.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
@@ -547,15 +578,15 @@ function createStoryboardStore(databasePath) {
 
   function listUsers() {
     return db.prepare(`SELECT u.id, u.username, u.display_name, u.is_admin, u.is_active, u.must_change_password, u.created_at, u.last_login_at, (SELECT COUNT(*) FROM project_members pm WHERE pm.user_id = u.id AND pm.role = 'owner') AS owned_projects FROM users u ORDER BY u.username`).all()
-      .map((row) => ({ id: row.id, username: row.username, displayName: row.display_name, isAdmin: Boolean(row.is_admin), isActive: Boolean(row.is_active), mustChangePassword: Boolean(row.must_change_password), createdAt: row.created_at, lastLoginAt: row.last_login_at, ownedProjects: row.owned_projects }));
+      .map((row) => ({ id: row.id, username: row.username, displayName: row.display_name, isAdmin: row.username === 'admin' && Boolean(row.is_admin), isActive: Boolean(row.is_active), mustChangePassword: Boolean(row.must_change_password), createdAt: row.created_at, lastLoginAt: row.last_login_at, ownedProjects: row.owned_projects }));
   }
 
-  function createUser(actor, { username, displayName, passwordHash, isAdmin = false }) {
+  function createUser(actor, { username, displayName, passwordHash }) {
     const now = Date.now();
     try {
-      const result = db.prepare(`INSERT INTO users (username, display_name, password_hash, is_admin, is_active, must_change_password, session_version, created_at, updated_at, password_changed_at) VALUES (?, ?, ?, ?, 1, 1, 1, ?, ?, ?)`).run(username, displayName || username, passwordHash, isAdmin ? 1 : 0, now, now, now);
+      const result = db.prepare(`INSERT INTO users (username, display_name, password_hash, is_admin, is_active, must_change_password, session_version, created_at, updated_at, password_changed_at) VALUES (?, ?, ?, 0, 1, 1, 1, ?, ?, ?)`).run(username, displayName || username, passwordHash, now, now, now);
       const id = Number(result.lastInsertRowid);
-      audit('user_created', { actorUserId: actor.id, targetUserId: id, metadata: { isAdmin: Boolean(isAdmin) } });
+      audit('user_created', { actorUserId: actor.id, targetUserId: id, metadata: { isAdmin: false } });
       return id;
     } catch (error) {
       if (String(error.message).includes('UNIQUE')) throw new HttpError(409, 'Account is unavailable', 'account_unavailable');
@@ -589,33 +620,22 @@ function createStoryboardStore(databasePath) {
     if (targetUserId === actor.id && identityChangedByRequest) {
       throw new HttpError(409, 'You cannot edit your own account identity', 'cannot_edit_self_identity');
     }
-    if (payload.isAdmin !== undefined && typeof payload.isAdmin !== 'boolean') {
-      throw new HttpError(400, 'Administrator status must be a boolean', 'invalid_admin_status');
-    }
+    if (payload.isAdmin !== undefined) throw new HttpError(409, 'Administrator status is fixed', 'admin_status_fixed');
+    if (payload.isActive !== undefined) throw new HttpError(409, 'Accounts must be deleted instead of disabled', 'account_status_fixed');
     let username = target.username;
     if (payload.username !== undefined) {
       username = normalizeUsername(payload.username);
       if (!username) throw new HttpError(400, 'Username format is invalid', 'invalid_username');
     }
-    const active = payload.isActive === undefined ? Boolean(target.is_active) : Boolean(payload.isActive);
-    const isAdmin = payload.isAdmin === undefined ? Boolean(target.is_admin) : payload.isAdmin;
-    if (!active && target.is_active) {
-      const owned = db.prepare("SELECT COUNT(*) AS count FROM project_members WHERE user_id = ? AND role = 'owner'").get(targetUserId).count;
-      if (owned > 0) throw new HttpError(409, 'Transfer owned projects before disabling this account', 'owned_projects_exist', { count: owned });
-      if (targetUserId === actor.id) throw new HttpError(409, 'You cannot disable your own account', 'cannot_disable_self');
-    }
-    if (target.is_active && target.is_admin && (!active || !isAdmin)) {
-      const otherActiveAdmins = db.prepare('SELECT COUNT(*) AS count FROM users WHERE is_admin = 1 AND is_active = 1 AND id <> ?').get(targetUserId).count;
-      if (otherActiveAdmins === 0) throw new HttpError(409, 'At least one active administrator is required', 'last_active_admin');
-    }
+    const active = Boolean(target.is_active);
+    const isAdmin = target.username === 'admin' && Boolean(target.is_admin);
     const displayName = String(payload.displayName ?? target.display_name).trim().slice(0, 80) || username;
     const usernameChanged = username !== target.username;
-    const accessChanged = active !== Boolean(target.is_active) || isAdmin !== Boolean(target.is_admin);
-    const sessionsChanged = usernameChanged || accessChanged;
+    const sessionsChanged = usernameChanged;
     try {
       transaction(() => {
-        db.prepare('UPDATE users SET username = ?, display_name = ?, is_active = ?, is_admin = ?, session_version = session_version + ?, updated_at = ? WHERE id = ?')
-          .run(username, displayName, active ? 1 : 0, isAdmin ? 1 : 0, sessionsChanged ? 1 : 0, Date.now(), targetUserId);
+        db.prepare('UPDATE users SET username = ?, display_name = ?, session_version = session_version + ?, updated_at = ? WHERE id = ?')
+          .run(username, displayName, sessionsChanged ? 1 : 0, Date.now(), targetUserId);
         if (sessionsChanged) revokeUserSessions(targetUserId);
         audit('user_updated', {
           actorUserId: actor.id,
@@ -632,6 +652,44 @@ function createStoryboardStore(databasePath) {
       if (String(error.message).includes('UNIQUE')) throw new HttpError(409, 'Account is unavailable', 'account_unavailable');
       throw error;
     }
+  }
+
+  function deleteUser(actor, targetUserId) {
+    const target = db.prepare('SELECT * FROM users WHERE id = ?').get(targetUserId);
+    if (!target) throw new HttpError(404, 'Account not found', 'account_not_found');
+    const admin = db.prepare("SELECT * FROM users WHERE username = 'admin' AND is_admin = 1 AND is_active = 1").get();
+    if (!admin) throw new HttpError(409, 'The admin account is unavailable', 'admin_account_unavailable');
+    if (target.id === admin.id || target.id === actor.id || target.username === 'admin') {
+      throw new HttpError(409, 'The admin account cannot be deleted', 'admin_account_protected');
+    }
+
+    const ownedProjects = db.prepare("SELECT project_id FROM project_members WHERE user_id = ? AND role = 'owner' ORDER BY project_id").all(targetUserId);
+    const now = Date.now();
+    transaction(() => {
+      ownedProjects.forEach(({ project_id: projectId }) => {
+        db.prepare('DELETE FROM project_members WHERE project_id = ? AND user_id = ?').run(projectId, admin.id);
+        db.prepare("UPDATE project_members SET user_id = ?, created_by_user_id = ?, updated_at = ? WHERE project_id = ? AND user_id = ? AND role = 'owner'")
+          .run(admin.id, actor.id, now, projectId, targetUserId);
+        audit('project_ownership_transferred', {
+          actorUserId: actor.id,
+          targetUserId: admin.id,
+          projectId,
+          metadata: { previousOwnerUserId: targetUserId, accountDeletion: true }
+        });
+      });
+      db.prepare('DELETE FROM project_members WHERE user_id = ?').run(targetUserId);
+      audit('user_deleted', {
+        actorUserId: actor.id,
+        targetUserId,
+        metadata: {
+          username: target.username,
+          displayName: target.display_name,
+          transferredProjects: ownedProjects.length,
+          transferredToUserId: admin.id
+        }
+      });
+      db.prepare('DELETE FROM users WHERE id = ?').run(targetUserId);
+    });
   }
 
   function resetUserPassword(actor, targetUserId, passwordHash) {
@@ -658,7 +716,7 @@ function createStoryboardStore(databasePath) {
     acquireLock, heartbeatLock, releaseLock, saveProject, deleteProject,
     listMembers, addOrUpdateMember, removeMember, transferOwnership,
     listShareLinks, createShareLink, revokeShareLink, getShare, getSharedProject,
-    listUsers, createUser, registerUser, updateUser, resetUserPassword, changePassword,
+    listUsers, createUser, registerUser, updateUser, deleteUser, resetUserPassword, changePassword,
     close() { db.close(); }
   };
 }
@@ -869,7 +927,8 @@ function createStoryboardApplication({
           requireCsrf(request, auth); const payload = await readJson(request);
           const username = normalizeUsername(payload.username);
           if (!username) throw new HttpError(400, 'Username format is invalid', 'invalid_username');
-          const id = store.createUser(auth.user, { username, displayName: String(payload.displayName || '').trim().slice(0, 80), passwordHash: await hashTemporaryPassword(passwordParams), isAdmin: Boolean(payload.isAdmin) });
+          if (payload.isAdmin !== undefined) throw new HttpError(409, 'Administrator status is fixed', 'admin_status_fixed');
+          const id = store.createUser(auth.user, { username, displayName: String(payload.displayName || '').trim().slice(0, 80), passwordHash: await hashTemporaryPassword(passwordParams) });
           return sendJson(response, 201, { id });
         }
       }
@@ -878,6 +937,10 @@ function createStoryboardApplication({
       if (adminUserMatch && request.method === 'PATCH') {
         const auth = authenticate(request); requireAdmin(auth); requireCsrf(request, auth);
         store.updateUser(auth.user, Number(adminUserMatch[1]), await readJson(request)); return sendEmpty(response, 204);
+      }
+      if (adminUserMatch && request.method === 'DELETE') {
+        const auth = authenticate(request); requireAdmin(auth); requireCsrf(request, auth);
+        store.deleteUser(auth.user, Number(adminUserMatch[1])); return sendEmpty(response, 204);
       }
       const adminResetMatch = /^\/api\/admin\/users\/(\d+)\/reset-password$/.exec(url.pathname);
       if (adminResetMatch && request.method === 'POST') {
@@ -1021,7 +1084,7 @@ async function promptHidden(label) {
 async function runSetupAdmin(databasePath, argv) {
   const usernameIndex = argv.indexOf('--username');
   const username = normalizeUsername(usernameIndex >= 0 ? argv[usernameIndex + 1] : '');
-  if (!username) throw new Error('Usage: node server.js setup-admin --username <3-32 character username>');
+  if (username !== 'admin') throw new Error('Usage: node server.js setup-admin --username admin');
   const password = await promptHidden('管理员密码（12–128 个字符）: ');
   const confirmation = await promptHidden('再次输入管理员密码: ');
   if (password !== confirmation) throw new Error('Passwords do not match');

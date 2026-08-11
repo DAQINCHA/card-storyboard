@@ -239,6 +239,61 @@ html.preload-view-editor #editor-view.hidden {
     gap: 1.25rem;
 }
 
+.projects-grid.is-admin-grouped {
+    display: block;
+}
+
+.account-project-group + .account-project-group {
+    margin-top: 1.7rem;
+}
+
+.account-project-divider {
+    display: flex;
+    align-items: center;
+    gap: 0.48rem;
+    min-height: 32px;
+    margin-bottom: 0.8rem;
+}
+
+.account-project-divider-line {
+    flex: 1;
+    height: 2px;
+    border-radius: 999px;
+    background: #dbe2ea;
+}
+
+.account-project-divider-label {
+    display: flex;
+    align-items: baseline;
+    gap: 0.45rem;
+    max-width: min(68vw, 520px);
+    padding: 0.18rem 0.72rem;
+    border: 1px dashed #cbd5e1;
+    border-radius: 999px;
+    background: var(--bg-color);
+    color: #475569;
+    line-height: 1.3;
+    white-space: nowrap;
+}
+
+.account-project-owner {
+    overflow: hidden;
+    font-size: 0.78rem;
+    text-overflow: ellipsis;
+}
+
+.account-project-meta {
+    flex: 0 0 auto;
+    color: #94a3b8;
+    font-size: 0.68rem;
+}
+
+.account-project-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 1.25rem;
+}
+
 .new-project-card {
     display: flex;
     flex-direction: column;
@@ -324,9 +379,12 @@ html.preload-view-editor #editor-view.hidden {
     transition: background-color 0.2s ease;
 }
 
-.project-card[data-access-role="owner"] .project-card-cover::before,
-.project-card[data-access-role="admin"] .project-card-cover::before {
+.project-card[data-access-role="owner"] .project-card-cover::before {
     background: #8ab6a9;
+}
+
+.project-card[data-access-role="admin"] .project-card-cover::before {
+    background: #dc4f43;
 }
 
 .project-card[data-access-role="editor"] .project-card-cover::before {
@@ -1610,6 +1668,11 @@ body.is-sorting {
         grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 1.2rem;
     }
+
+    .account-project-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 1.2rem;
+    }
 }
 
 @media (max-width: 720px) {
@@ -1623,6 +1686,11 @@ body.is-sorting {
     }
 
     .projects-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 1rem;
+    }
+
+    .account-project-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 1rem;
     }
@@ -1906,12 +1974,14 @@ body.is-sorting {
     }
 
     .scene-divider-trigger::before,
-    .scene-divider-line {
+    .scene-divider-line,
+    .account-project-divider-line {
         background: #a9a295;
     }
 
     .scene-divider-trigger-label,
-    .scene-divider-label {
+    .scene-divider-label,
+    .account-project-divider-label {
         border: 1px solid #878276;
         border-radius: 4px;
         background: #fffdf8;
@@ -2100,9 +2170,12 @@ body.is-sorting {
     white-space: nowrap;
 }
 
-.access-badge[data-role="owner"],
-.access-badge[data-role="admin"] {
+.access-badge[data-role="owner"] {
     color: #5f887c;
+}
+
+.access-badge[data-role="admin"] {
+    color: #dc4f43;
 }
 
 .access-badge[data-role="editor"] {
@@ -2132,9 +2205,12 @@ body.is-sorting {
     display: block;
 }
 
-.project-header[data-access-role="owner"]::before,
-.project-header[data-access-role="admin"]::before {
+.project-header[data-access-role="owner"]::before {
     background: #8ab6a9;
+}
+
+.project-header[data-access-role="admin"]::before {
+    background: #dc4f43;
 }
 
 .project-header[data-access-role="editor"]::before {
@@ -2291,6 +2367,13 @@ body.is-sorting {
     color: white;
     font-weight: 700;
     cursor: pointer;
+    transition: background-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+.danger-btn:hover {
+    background: #991b1b;
+    box-shadow: 2px 2px 0 rgba(41, 40, 33, 0.35);
+    transform: translate(-1px, -1px);
 }
 
 .new-link-output {
@@ -2374,9 +2457,12 @@ body.is-sorting {
         background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f0eadc' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
     }
 
-    .access-badge[data-role="owner"],
-    .access-badge[data-role="admin"] {
+    .access-badge[data-role="owner"] {
         color: #8ab6a9;
+    }
+
+    .access-badge[data-role="admin"] {
+        color: #ef806d;
     }
 
     .access-badge[data-role="editor"] {
@@ -2548,7 +2634,8 @@ body.is-sorting {
 
     .multi-select-divider,
     .scene-divider-trigger::before,
-    .scene-divider-line {
+    .scene-divider-line,
+    .account-project-divider-line {
         background: #777165;
     }
 
@@ -2559,10 +2646,15 @@ body.is-sorting {
     }
 
     .scene-divider-trigger-label,
-    .scene-divider-label {
+    .scene-divider-label,
+    .account-project-divider-label {
         background: #24251f;
         border-color: #777165;
         color: #d5cfc2;
+    }
+
+    .account-project-meta {
+        color: #aaa397;
     }
 
     .scene-divider-trigger:hover {
