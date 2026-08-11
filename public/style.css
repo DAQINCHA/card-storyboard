@@ -313,13 +313,13 @@ html.preload-view-editor #editor-view.hidden {
 .project-card-cover::before {
     content: '';
     position: absolute;
-    left: 1rem;
+    left: 0;
     top: 0;
-    width: 80px;
-    height: 20px;
+    width: 34px;
+    height: 34px;
     background: #dcae12;
-    border-radius: 0 0 12px 12px;
-    opacity: 0.62;
+    clip-path: polygon(0 0, 100% 0, 0 100%);
+    opacity: 1;
     pointer-events: none;
     transition: background-color 0.2s ease;
 }
@@ -1759,10 +1759,9 @@ body.is-sorting {
     }
 
     .project-card-cover::before {
-        left: 0.9rem;
-        width: 76px;
-        height: 19px;
-        border-radius: 0 0 3px 3px;
+        left: 0;
+        width: 34px;
+        height: 34px;
         background: #ef765f;
         opacity: 1;
     }
