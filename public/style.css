@@ -2392,6 +2392,10 @@ body.is-sorting {
         max-width: calc(100% - 122px);
     }
 
+    .print-pages .shot-time-input {
+        border-radius: 3px;
+    }
+
     .print-page-content {
         width: 100%;
         height: auto;
