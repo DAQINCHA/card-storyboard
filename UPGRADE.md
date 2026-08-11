@@ -21,6 +21,15 @@ export STORYBOARD_ALLOW_INSECURE_HTTP=1
 
 多个合法入口用英文逗号分隔 `STORYBOARD_ALLOWED_ORIGINS`。请求的 `Host` 也必须包含在这些入口中。
 
+当前 Docker Compose 默认公共入口为 NAS 的 `http://10.0.0.8:5199`，并保留从 NAS 本机的 `http://localhost:5199` 和 `http://127.0.0.1:5199` 访问。若 NAS IP、主机名或反向代理域名发生变化，需在项目目录创建 `.env`，并把浏览器地址（包含协议和端口）配置为合法入口，例如：
+
+```dotenv
+STORYBOARD_PUBLIC_ORIGIN=http://192.168.1.20:5199
+STORYBOARD_ALLOWED_ORIGINS=http://192.168.1.20:5199,http://localhost:5199,http://127.0.0.1:5199
+```
+
+修改后执行 `docker compose up -d --force-recreate` 让容器读取新配置。不要把 `0.0.0.0` 写入浏览器地址或合法入口；它只用于服务监听。
+
 ## 配置自助注册
 
 自助注册默认开启。任何能访问服务的人都可以创建普通账户，并在注册后直接登录；新账户不会自动获得现有项目的访问权限。需要仅由管理员开户时，在启动服务前设置：
