@@ -2001,6 +2001,16 @@ body.is-sorting {
     font: inherit;
 }
 
+.inline-form select {
+    padding-right: 2.75rem;
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236f6a60' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 1rem center;
+    background-size: 0.9em;
+}
+
 .inline-check {
     display: flex !important;
     grid-template-columns: auto 1fr;
@@ -2093,6 +2103,8 @@ body.is-sorting {
     align-items: center;
     justify-content: center;
     gap: 0.6rem;
+    width: 100%;
+    max-width: var(--desktop-content-width);
     margin: 0 auto 0.8rem;
     padding: 0.55rem 0.8rem;
     border: 1px solid #d3a846;
@@ -2176,17 +2188,28 @@ body.is-sorting {
 
 .inline-form {
     display: grid;
-    grid-template-columns: minmax(130px, 1fr) auto auto;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) 6.5rem;
+    align-items: stretch;
     gap: 0.5rem;
     margin-bottom: 0.8rem;
 }
 
-.inline-form .primary-btn {
+.inline-form > button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
     height: auto;
     padding: 0.55rem 0.7rem;
-    border: 1px solid transparent;
     border-radius: var(--radius-md);
     font-weight: 700;
+    line-height: 1;
+    text-align: center;
+    white-space: nowrap;
+}
+
+.inline-form .primary-btn {
+    border: 1px solid transparent;
 }
 
 .member-row,
@@ -2299,6 +2322,10 @@ body.is-sorting {
 
     .header-select {
         background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f0eadc' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    }
+
+    .inline-form select {
+        background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23aaa397' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
     }
 
     .home-search::placeholder {
