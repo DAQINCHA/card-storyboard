@@ -20,6 +20,7 @@
     --shot-aspect: 16/9;
     --header-btn-height: 40px;
     --shot-card-width: 285px;
+    --desktop-content-width: 1505px;
     --project-scene-font: "HanziPen SC", "翩翩体-简", "STKaiti", "Kaiti SC", cursive;
     /* Dynamic aspect ratio */
 }
@@ -230,10 +231,12 @@ html.preload-view-editor #editor-view.hidden {
 }
 
 .projects-grid {
-    margin-top: 0;
+    width: 100%;
+    max-width: var(--desktop-content-width);
+    margin: 0 auto;
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
-    gap: 1.7rem;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 1.25rem;
 }
 
 .new-project-card {
@@ -1686,7 +1689,10 @@ body.is-sorting {
 
     .home-header,
     .project-header {
+        width: 100%;
+        max-width: var(--desktop-content-width);
         min-height: 85px;
+        margin-inline: auto;
         border: 1.5px solid #292821;
         background: #fffdf8;
         box-shadow: 5px 5px 0 #292821;
