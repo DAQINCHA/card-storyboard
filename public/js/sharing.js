@@ -6,6 +6,25 @@ const ROLE_LABELS = Object.freeze({
     viewer: '仅查看'
 });
 
+async function copyText(text) {
+    if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return;
+    }
+    const input = document.createElement('textarea');
+    input.value = text;
+    input.setAttribute('readonly', '');
+    input.style.position = 'fixed';
+    input.style.opacity = '0';
+    document.body.appendChild(input);
+    input.select();
+    try {
+        if (!document.execCommand('copy')) throw new Error('复制失败，请手动复制链接');
+    } finally {
+        input.remove();
+    }
+}
+
 function createSharingDialog(project) {
     const backdrop = document.createElement('div');
     backdrop.className = 'app-dialog-backdrop';
@@ -54,8 +73,16 @@ export async function openSharingDialog(project) {
             const row = document.createElement('div'); row.className = 'member-row';
             const state = link.revokedAt ? '已撤销' : (link.expiresAt && link.expiresAt <= Date.now() ? '已过期' : '有效');
             row.innerHTML = '<div><strong></strong><small></small></div><div class="row-actions"></div>';
-            row.querySelector('strong').textContent = link.label || `链接 #${link.id}`;
+            row.querySelector('strong').textContent = link.label || `链接 #${link.displayNumber}`;
             row.querySelector('small').textContent = `${state} · ${link.expiresAt ? new Date(link.expiresAt).toLocaleString() : '永不过期'}`;
+            const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'secondary-btn compact-btn'; copy.textContent = '复制';
+            copy.addEventListener('click', async () => {
+                try {
+                    await copyText(`${window.location.origin}/share/${link.token}`);
+                    message.textContent = `链接 #${link.displayNumber} 已复制`;
+                } catch (error) { message.textContent = error.message; }
+            });
+            row.querySelector('.row-actions').appendChild(copy);
             if (!link.revokedAt) {
                 const revoke = document.createElement('button'); revoke.type = 'button'; revoke.className = 'secondary-btn compact-btn'; revoke.textContent = '撤销';
                 revoke.addEventListener('click', async () => { await apiRequest(`/api/projects/${project.id}/share-links/${link.id}`, { method: 'DELETE' }); await renderLinks(); });
@@ -75,8 +102,8 @@ export async function openSharingDialog(project) {
         try {
             const link = await apiRequest(`/api/projects/${project.id}/share-links`, { method: 'POST', body: JSON.stringify({ label: form.elements.label.value, expiresAt }) });
             const url = `${window.location.origin}/share/${link.token}`;
-            const output = backdrop.querySelector('.new-link-output'); output.textContent = `链接只显示一次：${url}`;
-            await navigator.clipboard?.writeText(url).catch(() => {}); await renderLinks();
+            const output = backdrop.querySelector('.new-link-output'); output.textContent = '链接已创建，可随时从下方列表复制。';
+            await copyText(url).catch(() => {}); await renderLinks();
         } catch (error) { message.textContent = error.message; }
     });
     backdrop.querySelector('.transfer-form').addEventListener('submit', async (event) => {

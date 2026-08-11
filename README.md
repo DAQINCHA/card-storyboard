@@ -24,7 +24,7 @@
 
 ## Docker Compose 部署
 
-仓库中的 `compose.yaml` 默认将公共访问地址设为 `http://10.0.0.8:5199`。如果 NAS 地址不同，请先在项目目录创建 `.env`：
+仓库中的 `compose.yaml` 默认公共访问地址为 `http://localhost:5199`，同时允许使用 `http://127.0.0.1:5199`。如果需要从其他设备通过 NAS 地址访问，请先在项目目录创建 `.env`：
 
 ```dotenv
 STORYBOARD_PUBLIC_ORIGIN=http://192.168.1.20:5199
@@ -108,7 +108,7 @@ STORYBOARD_ALLOW_REGISTRATION=0
 | `HOST` | `0.0.0.0` | 服务监听地址 |
 | `PORT` | `5199` | 服务监听端口 |
 | `STORYBOARD_DATA_FILE` | `data/storyboard.db` | SQLite 数据库路径 |
-| `STORYBOARD_PUBLIC_ORIGIN` | `http://localhost:5199` | 浏览器使用的公共入口；Compose 默认覆盖为 NAS 地址 |
+| `STORYBOARD_PUBLIC_ORIGIN` | `http://localhost:5199` | 浏览器使用的公共入口 |
 | `STORYBOARD_ALLOWED_ORIGINS` | 与公共入口相同 | 允许的 Origin 和 Host，多个值用英文逗号分隔 |
 | `STORYBOARD_ALLOW_INSECURE_HTTP` | 未开启 | 设为 `1` 后允许 HTTP，仅用于受信局域网 |
 | `STORYBOARD_ALLOW_REGISTRATION` | 开启 | 设为 `0` 后关闭自助注册 |

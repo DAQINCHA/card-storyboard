@@ -6,7 +6,7 @@ const test = require('node:test');
 
 const { createStoryboardApplication, setupDatabase } = require('../server.js');
 const { collectDataFingerprint, openDatabase, restoreDatabase } = require('../server/schema.js');
-const { hashPassword } = require('../server/security.js');
+const { hashPassword, tokenHash } = require('../server/security.js');
 
 const projectRoot = path.dirname(__dirname);
 const TEST_ORIGIN = 'http://storyboard.test';
@@ -138,7 +138,7 @@ test('serves hardened frontend and health endpoint without leaking the database 
     const healthResponse = await fetch(`${baseUrl}/api/health`);
     assert.equal(healthResponse.status, 200);
     const health = await healthResponse.json();
-    assert.deepEqual(health, { ok: true, service: 'card-storyboard', schemaVersion: 1 });
+    assert.deepEqual(health, { ok: true, service: 'card-storyboard', schemaVersion: 2 });
     assert.equal(healthResponse.headers.get('x-frame-options'), 'DENY');
     assert.match(healthResponse.headers.get('content-security-policy'), /default-src 'self'/);
 
@@ -523,6 +523,86 @@ test('enforces owner editor viewer permissions and revocable anonymous sharing',
   });
 });
 
+test('keeps five reusable share links with numbering scoped to each project', async () => {
+  await withServer(async (baseUrl, databasePath) => {
+    const admin = await login(baseUrl);
+    const firstProject = await (await api(baseUrl, admin, '/api/projects', { method: 'POST', body: { name: 'First shared project' } })).json();
+    const secondProject = await (await api(baseUrl, admin, '/api/projects', { method: 'POST', body: { name: 'Second shared project' } })).json();
+    const created = [];
+
+    for (let number = 1; number <= 6; number += 1) {
+      const response = await api(baseUrl, admin, `/api/projects/${firstProject.id}/share-links`, {
+        method: 'POST', body: { expiresAt: Date.now() + 60_000 }
+      });
+      assert.equal(response.status, 201);
+      const link = await response.json();
+      assert.equal(link.displayNumber, number);
+      created.push(link);
+    }
+
+    const secondLink = await (await api(baseUrl, admin, `/api/projects/${secondProject.id}/share-links`, {
+      method: 'POST', body: { expiresAt: Date.now() + 60_000 }
+    })).json();
+    assert.equal(secondLink.displayNumber, 1);
+
+    const firstLinks = await (await api(baseUrl, admin, `/api/projects/${firstProject.id}/share-links`)).json();
+    assert.equal(firstLinks.length, 5);
+    assert.deepEqual(firstLinks.map((link) => link.displayNumber), [6, 5, 4, 3, 2]);
+    assert.ok(firstLinks.every((link) => typeof link.token === 'string' && link.token.length >= 20));
+    assert.equal((await fetch(`${baseUrl}/share/${created[0].token}`)).status, 404);
+    assert.equal((await fetch(`${baseUrl}/share/${firstLinks[0].token}`)).status, 200);
+
+    const secondLinks = await (await api(baseUrl, admin, `/api/projects/${secondProject.id}/share-links`)).json();
+    assert.deepEqual(secondLinks.map((link) => link.displayNumber), [1]);
+
+    const db = openDatabase(databasePath);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM project_share_links WHERE project_id = ?').get(firstProject.id).count, 5);
+    assert.equal(db.prepare('SELECT share_link_id FROM security_audit_events WHERE event_type = ? AND project_id = ? ORDER BY id LIMIT 1').get('share_link_created', firstProject.id).share_link_id, null);
+    db.close();
+  });
+});
+
+test('automatically migrates v1 share links, trims history and resets project numbering', async () => {
+  const legacyTokens = Array.from({ length: 7 }, (_, index) => `legacy-share-token-${index + 1}-still-valid`);
+  await withServer(async (baseUrl, databasePath) => {
+    const admin = await login(baseUrl);
+    const projects = await (await api(baseUrl, admin, '/api/projects')).json();
+    assert.equal(projects.length, 1);
+    const links = await (await api(baseUrl, admin, `/api/projects/${projects[0].id}/share-links`)).json();
+    assert.equal(links.length, 5);
+    assert.deepEqual(links.map((link) => link.displayNumber), [5, 4, 3, 2, 1]);
+    assert.ok(links.every((link) => typeof link.token === 'string' && link.token.length >= 20));
+    assert.equal((await fetch(`${baseUrl}/share/${legacyTokens[0]}`)).status, 404);
+    assert.equal((await fetch(`${baseUrl}/share/${legacyTokens[6]}`)).status, 200);
+    assert.equal((await fetch(`${baseUrl}/share/${links[0].token}`)).status, 200);
+
+    const db = openDatabase(databasePath);
+    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 2);
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+    db.close();
+  }, async (databasePath) => {
+    await initialize(databasePath);
+    const db = openDatabase(databasePath);
+    db.exec(`
+      DROP INDEX project_share_links_display_number_idx;
+      DROP INDEX project_share_links_reusable_token_idx;
+      ALTER TABLE project_share_links DROP COLUMN reusable_token;
+      ALTER TABLE project_share_links DROP COLUMN display_number;
+      DELETE FROM schema_migrations WHERE version = 2;
+      PRAGMA user_version = 1;
+    `);
+    const now = Date.now();
+    const projectResult = db.prepare("INSERT INTO projects (name, scene, aspect_ratio, shots_json, updated_at, version) VALUES ('Legacy shared project', '', '16/9', '[]', '2026-01-01 00:00:00', 1)").run();
+    const projectId = Number(projectResult.lastInsertRowid);
+    const adminId = Number(db.prepare("SELECT id FROM users WHERE username = 'admin'").get().id);
+    db.prepare("INSERT INTO project_members (project_id, user_id, role, created_by_user_id, created_at, updated_at) VALUES (?, ?, 'owner', ?, ?, ?)")
+      .run(projectId, adminId, adminId, now, now);
+    const insert = db.prepare('INSERT INTO project_share_links (project_id, token_hash, created_by_user_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?)');
+    legacyTokens.forEach((token, index) => insert.run(projectId, tokenHash(token), adminId, now + index, now + 60_000));
+    db.close();
+  });
+});
+
 test('migrates an isolated v0 database without changing project or image bytes', async () => {
   await withServer(async (baseUrl, databasePath) => {
     const admin = await login(baseUrl);
@@ -531,7 +611,7 @@ test('migrates an isolated v0 database without changing project or image bytes',
     assert.equal((await projectsResponse.json()).length, 4);
     assert.ok(readFileSync(databasePath).length > 0);
     const db = openDatabase(databasePath);
-    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 1);
+    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 2);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM project_members WHERE role = 'owner'").get().count, 4);
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
     db.close();

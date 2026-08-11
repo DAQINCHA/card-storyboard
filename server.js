@@ -23,6 +23,7 @@ const {
   SCHEMA_VERSION,
   assertCurrentSchema,
   collectDataFingerprint,
+  migrateDatabase,
   openDatabase,
   restoreDatabase,
   setupDatabase
@@ -178,6 +179,7 @@ function toProjectDetail(row, user, { share = false, lock = null } = {}) {
 }
 
 function createStoryboardStore(databasePath) {
+  migrateDatabase(databasePath);
   const db = openDatabase(databasePath);
   try {
     assertCurrentSchema(db);
@@ -530,8 +532,17 @@ function createStoryboardStore(databasePath) {
 
   function listShareLinks(projectId, user) {
     requireProjectAccess(projectId, user, 'manage');
-    return db.prepare('SELECT id, label, created_at, expires_at, revoked_at, last_used_at FROM project_share_links WHERE project_id = ? ORDER BY created_at DESC').all(projectId)
-      .map((row) => ({ id: row.id, label: row.label, createdAt: row.created_at, expiresAt: row.expires_at, revokedAt: row.revoked_at, lastUsedAt: row.last_used_at }));
+    return db.prepare('SELECT id, display_number, reusable_token, label, created_at, expires_at, revoked_at, last_used_at FROM project_share_links WHERE project_id = ? ORDER BY created_at DESC, id DESC LIMIT 5').all(projectId)
+      .map((row) => ({
+        id: row.id,
+        displayNumber: row.display_number,
+        token: row.reusable_token,
+        label: row.label,
+        createdAt: row.created_at,
+        expiresAt: row.expires_at,
+        revokedAt: row.revoked_at,
+        lastUsedAt: row.last_used_at
+      }));
   }
 
   function createShareLink(projectId, user, payload) {
@@ -545,12 +556,18 @@ function createStoryboardStore(databasePath) {
     const rawToken = randomToken();
     const now = Date.now();
     let id;
+    let displayNumber;
     transaction(() => {
-      const result = db.prepare('INSERT INTO project_share_links (project_id, token_hash, label, created_by_user_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)').run(projectId, tokenHash(rawToken), label, user.id, now, expiresAt);
+      displayNumber = Number(db.prepare('SELECT COALESCE(MAX(display_number), 0) + 1 AS next_number FROM project_share_links WHERE project_id = ?').get(projectId).next_number);
+      const result = db.prepare('INSERT INTO project_share_links (project_id, token_hash, reusable_token, display_number, label, created_by_user_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(projectId, tokenHash(rawToken), rawToken, displayNumber, label, user.id, now, expiresAt);
       id = Number(result.lastInsertRowid);
       audit('share_link_created', { actorUserId: user.id, projectId, shareLinkId: id, metadata: { expiresAt } });
+      db.prepare(`DELETE FROM project_share_links WHERE project_id = ? AND id NOT IN (
+        SELECT id FROM project_share_links WHERE project_id = ? ORDER BY created_at DESC, id DESC LIMIT 5
+      )`).run(projectId, projectId);
     });
-    return { id, label, token: rawToken, createdAt: now, expiresAt };
+    return { id, displayNumber, label, token: rawToken, createdAt: now, expiresAt };
   }
 
   function revokeShareLink(projectId, user, linkId) {
@@ -565,7 +582,7 @@ function createStoryboardStore(databasePath) {
   function getShare(rawToken) {
     if (!rawToken) return null;
     const now = Date.now();
-    const row = db.prepare(`SELECT l.*, p.id AS project_exists FROM project_share_links l JOIN projects p ON p.id = l.project_id WHERE l.token_hash = ? AND l.revoked_at IS NULL AND (l.expires_at IS NULL OR l.expires_at > ?)`).get(tokenHash(rawToken), now);
+    const row = db.prepare(`SELECT l.*, p.id AS project_exists FROM project_share_links l JOIN projects p ON p.id = l.project_id WHERE (l.token_hash = ? OR l.reusable_token = ?) AND l.revoked_at IS NULL AND (l.expires_at IS NULL OR l.expires_at > ?)`).get(tokenHash(rawToken), rawToken, now);
     if (!row) return null;
     if (!row.last_used_at || now - row.last_used_at >= 5 * 60 * 1000) db.prepare('UPDATE project_share_links SET last_used_at = ? WHERE id = ?').run(now, row.id);
     return row;

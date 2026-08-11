@@ -3,9 +3,17 @@ const { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync,
 const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 
-const SCHEMA_VERSION = 1;
-const MIGRATION_NAME = 'accounts-sharing-and-edit-locks';
+const SCHEMA_VERSION = 2;
+const MIGRATIONS = Object.freeze({
+  1: 'accounts-sharing-and-edit-locks',
+  2: 'project-scoped-reusable-share-links'
+});
+const MIGRATION_NAME = MIGRATIONS[SCHEMA_VERSION];
 const MIGRATION_CHECKSUM = crypto.createHash('sha256').update(MIGRATION_NAME).digest('hex');
+
+function migrationChecksum(version) {
+  return crypto.createHash('sha256').update(MIGRATIONS[version]).digest('hex');
+}
 
 function openDatabase(databasePath) {
   mkdirSync(path.dirname(databasePath), { recursive: true });
@@ -166,18 +174,121 @@ function createVersionOneSchema(db) {
   `);
 }
 
+function createVersionTwoSchema(db) {
+  if (!hasColumn(db, 'project_share_links', 'display_number')) {
+    db.exec('ALTER TABLE project_share_links ADD COLUMN display_number INTEGER');
+  }
+  if (!hasColumn(db, 'project_share_links', 'reusable_token')) {
+    db.exec('ALTER TABLE project_share_links ADD COLUMN reusable_token TEXT');
+  }
+
+  db.exec(`
+    DELETE FROM project_share_links
+    WHERE id IN (
+      SELECT id FROM (
+        SELECT id, ROW_NUMBER() OVER (
+          PARTITION BY project_id ORDER BY created_at DESC, id DESC
+        ) AS recency_rank
+        FROM project_share_links
+      ) ranked
+      WHERE recency_rank > 5
+    );
+
+    WITH numbered AS (
+      SELECT id, ROW_NUMBER() OVER (
+        PARTITION BY project_id ORDER BY created_at ASC, id ASC
+      ) AS project_number
+      FROM project_share_links
+    )
+    UPDATE project_share_links
+    SET display_number = (
+      SELECT project_number FROM numbered WHERE numbered.id = project_share_links.id
+    );
+  `);
+
+  const missingTokens = db.prepare('SELECT id FROM project_share_links WHERE reusable_token IS NULL OR reusable_token = ?').all('');
+  const updateToken = db.prepare('UPDATE project_share_links SET reusable_token = ? WHERE id = ?');
+  missingTokens.forEach((row) => updateToken.run(crypto.randomBytes(32).toString('base64url'), row.id));
+
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS project_share_links_display_number_idx
+      ON project_share_links(project_id, display_number);
+    CREATE UNIQUE INDEX IF NOT EXISTS project_share_links_reusable_token_idx
+      ON project_share_links(reusable_token);
+  `);
+}
+
+function assertMigrationMetadata(db, version) {
+  const migration = db.prepare('SELECT name, checksum FROM schema_migrations WHERE version = ?').get(version);
+  if (!migration || migration.name !== MIGRATIONS[version] || migration.checksum !== migrationChecksum(version)) {
+    throw new Error('Database schema migration metadata is inconsistent');
+  }
+}
+
 function assertCurrentSchema(db) {
   const version = getSchemaVersion(db);
   if (version !== SCHEMA_VERSION) {
     const direction = version < SCHEMA_VERSION ? 'setup-admin or migration is required' : 'database is newer than this application';
     throw new Error(`Unsupported database schema version ${version}; ${direction}`);
   }
-  const migration = db.prepare('SELECT name, checksum FROM schema_migrations WHERE version = ?').get(SCHEMA_VERSION);
-  if (!migration || migration.name !== MIGRATION_NAME || migration.checksum !== MIGRATION_CHECKSUM) {
-    throw new Error('Database schema migration metadata is inconsistent');
-  }
+  Object.keys(MIGRATIONS).map(Number).filter((item) => item <= version).forEach((item) => assertMigrationMetadata(db, item));
   if (!db.prepare('SELECT 1 FROM users WHERE is_admin = 1 AND is_active = 1 LIMIT 1').get()) {
     throw new Error('Database has no active administrator');
+  }
+}
+
+function migrateDatabase(databasePath) {
+  let db = openDatabase(databasePath);
+  const version = getSchemaVersion(db);
+  if (version === SCHEMA_VERSION) {
+    try {
+      assertCurrentSchema(db);
+    } finally {
+      db.close();
+    }
+    return { migrated: false, backup: null };
+  }
+  if (version !== 1) {
+    db.close();
+    const direction = version < 1 ? 'setup-admin or migration is required' : 'database is newer than this application';
+    throw new Error(`Unsupported database schema version ${version}; ${direction}`);
+  }
+  let before;
+  let integrity;
+  try {
+    assertMigrationMetadata(db, 1);
+    before = collectDataFingerprint(db);
+    integrity = db.prepare('PRAGMA integrity_check').all();
+  } finally {
+    db.close();
+  }
+  if (integrity.length !== 1 || integrity[0].integrity_check !== 'ok') {
+    throw new Error('Database integrity check failed before migration');
+  }
+
+  const backup = createBackup(databasePath, version);
+  db = openDatabase(databasePath);
+  db.exec('BEGIN EXCLUSIVE');
+  try {
+    if (getSchemaVersion(db) !== 1) throw new Error('Database schema changed while migration was starting');
+    assertMigrationMetadata(db, 1);
+    createVersionTwoSchema(db);
+    db.prepare('INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)')
+      .run(SCHEMA_VERSION, MIGRATION_NAME, MIGRATION_CHECKSUM, Date.now());
+    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+    const after = collectDataFingerprint(db);
+    if (JSON.stringify(before) !== JSON.stringify(after)) {
+      throw new Error('Existing project or image data changed during migration');
+    }
+    const foreignKeyErrors = db.prepare('PRAGMA foreign_key_check').all();
+    if (foreignKeyErrors.length) throw new Error('Foreign key validation failed after migration');
+    db.exec('COMMIT');
+    return { migrated: true, backup };
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  } finally {
+    db.close();
   }
 }
 
@@ -205,6 +316,8 @@ function setupDatabase({ databasePath, username, displayName, passwordHash, must
   db.exec('BEGIN EXCLUSIVE');
   try {
     createVersionOneSchema(db);
+    db.prepare('INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)')
+      .run(1, MIGRATIONS[1], migrationChecksum(1), now);
     const result = db.prepare(`
       INSERT INTO users (
         username, display_name, password_hash, is_admin, is_active, must_change_password,
@@ -216,6 +329,7 @@ function setupDatabase({ databasePath, username, displayName, passwordHash, must
       INSERT INTO project_members (project_id, user_id, role, created_by_user_id, created_at, updated_at)
       SELECT id, ?, 'owner', ?, ?, ? FROM projects
     `).run(adminId, adminId, now, now);
+    createVersionTwoSchema(db);
     db.prepare('INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)')
       .run(SCHEMA_VERSION, MIGRATION_NAME, MIGRATION_CHECKSUM, now);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
@@ -286,6 +400,7 @@ module.exports = {
   createBackup,
   createLegacyTables,
   getSchemaVersion,
+  migrateDatabase,
   openDatabase,
   restoreDatabase,
   setupDatabase
