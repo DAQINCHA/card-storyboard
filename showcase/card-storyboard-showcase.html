@@ -1,0 +1,800 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#f3efe4">
+    <meta name="description" content="卡片分镜项目功能与使用方法的交互式 HTML 演示片">
+    <title>卡片分镜｜功能与用法演示</title>
+    <style>
+:root {
+    color-scheme: light;
+    --paper: #f3efe4;
+    --ink: #25241f;
+    --muted: #6d6b62;
+    --mint: #9fcfc2;
+    --mint-deep: #397a6a;
+    --yellow: #f0bd44;
+    --coral: #ee6c5b;
+    --blue: #4b83f5;
+    --line: rgba(37, 36, 31, .18);
+    --shadow: #25241f;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: Inter, "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+button, code, kbd { font: inherit; }
+button { color: inherit; }
+
+.deck {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    min-height: 560px;
+    isolation: isolate;
+    overflow: hidden;
+    background: var(--paper);
+}
+
+.stage-grid {
+    position: absolute;
+    inset: 0;
+    z-index: -3;
+    opacity: .38;
+    background-image:
+        linear-gradient(var(--line) 1px, transparent 1px),
+        linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size: clamp(24px, 2vw, 38px) clamp(24px, 2vw, 38px);
+    mask-image: linear-gradient(to bottom, #000 0, rgba(0,0,0,.45) 70%, transparent 100%);
+}
+
+.film-grain {
+    position: absolute;
+    inset: -50%;
+    z-index: 30;
+    pointer-events: none;
+    opacity: .04;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.75'/%3E%3C/svg%3E");
+    animation: grain .35s steps(2) infinite;
+}
+
+.slide {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    padding: clamp(68px, 7vh, 96px) clamp(48px, 6vw, 112px) clamp(76px, 9vh, 110px);
+    visibility: hidden;
+    opacity: 0;
+    transform: translateY(6%) scale(.98);
+    transition: opacity .65s ease, transform .75s cubic-bezier(.2,.8,.2,1), visibility .75s;
+    overflow: hidden;
+}
+
+.slide::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: radial-gradient(circle at 72% 36%, rgba(240,189,68,.16), transparent 30%);
+    opacity: 0;
+    transition: opacity .8s ease;
+}
+
+.slide.is-active {
+    visibility: visible;
+    opacity: 1;
+    transform: none;
+    z-index: 2;
+}
+
+.slide.is-active::before { opacity: 1; }
+.slide.is-exiting { visibility: visible; z-index: 1; transform: translateY(-5%) scale(.985); }
+
+.eyebrow {
+    margin: 0 0 18px;
+    color: var(--mint-deep);
+    font-size: clamp(12px, 1vw, 16px);
+    font-weight: 800;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+}
+
+h1, h2, p, figure { margin: 0; }
+h1, h2 { letter-spacing: -.045em; line-height: .98; }
+h1 { font-size: clamp(52px, 6.4vw, 106px); }
+h2 { font-size: clamp(40px, 4.4vw, 74px); }
+
+.lede {
+    max-width: 720px;
+    color: var(--muted);
+    font-size: clamp(17px, 1.5vw, 25px);
+    line-height: 1.7;
+}
+
+.reveal {
+    opacity: 0;
+    transform: translateY(28px);
+}
+.is-active .reveal {
+    animation: reveal .72s cubic-bezier(.2,.75,.2,1) both;
+    animation-delay: var(--delay, 0s);
+}
+
+.reveal-scale { opacity: 0; transform: scale(.92) rotate(.35deg); }
+.is-active .reveal-scale {
+    animation: reveal-scale .9s cubic-bezier(.2,.78,.2,1) both;
+    animation-delay: var(--delay, 0s);
+}
+
+.screenshot-frame, .browser-frame {
+    overflow: hidden;
+    border: 2px solid var(--ink);
+    border-radius: 14px;
+    background: #fffdf8;
+    box-shadow: 10px 10px 0 var(--shadow);
+}
+
+.screenshot-frame img, .browser-frame > img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.brand-icon { position: relative; display: inline-block; width: 48px; height: 48px; flex: 0 0 auto; }
+.brand-icon::before, .brand-icon::after, .brand-icon > i:first-child { content: ""; position: absolute; width: 29px; height: 34px; border: 3px solid var(--ink); border-radius: 5px; background: #fffdf8; }
+.brand-icon::before { left: 4px; top: 5px; border-color: var(--yellow); }
+.brand-icon::after { left: 11px; top: 9px; border-color: var(--blue); }
+.brand-icon > i:first-child { left: 17px; top: 13px; border-color: #b8b3a8; }
+.brand-icon > i:nth-child(2), .brand-icon > i:nth-child(3) { position: absolute; z-index: 2; left: 26px; width: 11px; height: 3px; border-radius: 2px; background: var(--ink); }
+.brand-icon > i:nth-child(2) { top: 26px; }
+.brand-icon > i:nth-child(3) { top: 33px; }
+.brand-icon.small { width: 38px; height: 38px; transform: scale(.8); transform-origin: left center; }
+
+/* Hero */
+.slide-hero { grid-template-columns: .9fr 1.1fr; align-items: center; gap: 3vw; }
+.hero-copy { z-index: 2; }
+.brand-lockup { display: flex; align-items: center; gap: 14px; margin-bottom: 6vh; font-size: 22px; font-weight: 850; }
+.brand-lockup .brand-icon { filter: drop-shadow(3px 3px 0 rgba(37,36,31,.15)); }
+.hero-copy .lede { margin-top: 28px; max-width: 610px; }
+.start-cue {
+    margin-top: 38px;
+    padding: 15px 20px;
+    border: 2px solid var(--ink);
+    border-radius: 8px;
+    background: var(--yellow);
+    box-shadow: 5px 5px 0 var(--ink);
+    font-weight: 850;
+    cursor: pointer;
+    transition: transform .2s, box-shadow .2s;
+}
+.start-cue:hover { transform: translate(3px,3px); box-shadow: 2px 2px 0 var(--ink); }
+.start-cue span { margin-left: 18px; }
+
+.hero-visual { position: relative; width: 100%; height: min(72vh, 760px); }
+.hero-halo { position: absolute; inset: 16% 4% 10% 6%; border-radius: 50%; background: var(--yellow); filter: blur(65px); opacity: .28; }
+.floating-screen {
+    position: absolute;
+    overflow: hidden;
+    border: 2px solid var(--ink);
+    border-radius: 12px;
+    background: white;
+    box-shadow: 12px 12px 0 var(--ink);
+}
+.floating-screen img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.screen-back { width: 70%; height: 45%; top: 9%; right: 1%; transform: rotate(4deg) translate(40px,-10px); opacity: 0; }
+.screen-front { width: 92%; height: 58%; left: 1%; top: 28%; transform: rotate(-2deg) translate(70px,40px); opacity: 0; }
+.screen-back img, .screen-front img { object-fit: contain; background: #fffdf8; }
+.mini-home-render, .mini-board-render { padding: 13px; }
+.mini-home-render header { display: flex; align-items: center; gap: 8px; padding-bottom: 10px; border-bottom: 1.5px solid var(--ink); }
+.mini-home-render header b { font-size: 11px; }
+.mini-home-render header input { width: 42%; margin-left: auto; padding: 7px; border: 1px solid #aaa69a; border-radius: 4px; font-size: 8px; }
+.mini-projects { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; padding-top: 13px; }
+.mini-projects article { height: 90px; border: 1.5px solid var(--ink); border-radius: 4px; background: white; box-shadow: 3px 3px 0 var(--yellow); }
+.mini-projects .new { display: grid; place-items: center; font-size: 24px; box-shadow: 3px 3px 0 var(--mint); }
+.mini-projects .green, .leaves-cover { background: radial-gradient(circle at 56% 48%, rgba(255,255,255,.9), transparent 22%), linear-gradient(135deg, #b7dbb8, #f1f7e7 48%, #4b9d67); }
+.mini-projects .portrait, .face-cover { background: radial-gradient(circle at 50% 38%, #e6ad89 0 21%, transparent 22%), linear-gradient(90deg, #9b7f66, #e3cbb4 52%, #6d4939); }
+.mini-projects .blank, .empty-cover { background: repeating-linear-gradient(45deg, #f1eadc 0 8px, #f8f4ec 8px 16px); }
+.mini-board-render header { display: flex; align-items: center; gap: 12px; padding-bottom: 10px; border-bottom: 1.5px solid var(--ink); font-size: 10px; }
+.mini-board-render header span { color: var(--muted); }
+.mini-board-render header strong { margin-left: auto; padding: 6px 8px; border-radius: 3px; background: var(--ink); color: white; }
+.mini-shot-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; padding-top: 12px; }
+.mini-shot-row i { height: 145px; border: 1.5px solid var(--ink); border-radius: 3px; background: linear-gradient(to bottom, var(--mint-deep) 0 12%, #dbeadb 12% 61%, white 61%); box-shadow: 3px 3px 0 var(--yellow); }
+.mini-shot-row i:nth-child(2) { background: linear-gradient(to bottom, #724015 0 12%, #d98b70 12% 61%, white 61%); }
+.mini-shot-row i:nth-child(n+3) { background: linear-gradient(to bottom, #188eb5 0 12%, #d6c8a6 12% 61%, white 61%); }
+.is-active .screen-back { animation: screen-in .9s .24s cubic-bezier(.2,.8,.2,1) forwards, drift 7s 1.2s ease-in-out infinite; }
+.is-active .screen-front { animation: screen-in-front 1s .08s cubic-bezier(.2,.8,.2,1) forwards, drift-front 6s 1.3s ease-in-out infinite; }
+.live-dot { position: absolute; top: 12px; right: 14px; width: 10px; height: 10px; border-radius: 50%; background: #4fb486; box-shadow: 0 0 0 0 rgba(79,180,134,.6); animation: beacon 2s infinite; }
+.floating-card { position: absolute; z-index: 5; min-width: 130px; padding: 13px 16px; border: 2px solid var(--ink); border-radius: 8px; background: #fffdf8; box-shadow: 6px 6px 0 var(--ink); opacity: 0; }
+.floating-card span { display: block; color: var(--muted); font-size: 10px; letter-spacing: .13em; }
+.floating-card b { display: block; margin-top: 5px; font-size: 17px; }
+.card-a { left: -2%; top: 19%; transform: rotate(-7deg); }
+.card-b { right: -1%; bottom: 15%; transform: rotate(6deg); background: var(--mint); }
+.card-c { left: 9%; bottom: 1%; transform: rotate(3deg); background: var(--yellow); }
+.is-active .floating-card { animation: card-pop .65s cubic-bezier(.16,.9,.2,1.2) forwards; }
+.is-active .card-a { animation-delay: .7s; }
+.is-active .card-b { animation-delay: .9s; }
+.is-active .card-c { animation-delay: 1.08s; }
+
+/* Proof */
+.slide-proof { grid-template-columns: .72fr 1.28fr; align-items: center; gap: 5vw; }
+.slide-copy.narrow h2 { max-width: 650px; }
+.slide-copy.narrow .lede { margin-top: 26px; }
+.proof-screen { height: min(69vh, 690px); position: relative; }
+.proof-screen img { object-position: center top; animation: slow-pan 10s ease-in-out infinite alternate; }
+.number-run { display: flex; gap: clamp(18px, 3vw, 50px); margin-top: 42px; padding-top: 28px; border-top: 2px solid var(--ink); }
+.number-run strong { display: block; font-size: clamp(40px, 4vw, 68px); line-height: 1; color: var(--mint-deep); }
+.number-run span { display: block; margin-top: 7px; color: var(--muted); font-size: 13px; }
+.scanline { position: absolute; inset: -12% 0 auto; height: 18%; background: linear-gradient(transparent, rgba(255,255,255,.55), transparent); animation: scan 4.4s 1s ease-in-out infinite; }
+
+.rendered-board { height: min(69vh, 690px); align-self: center; overflow: hidden; border: 2px solid var(--ink); border-radius: 14px; background: #fffdf8; box-shadow: 10px 10px 0 var(--ink); }
+.rendered-board > header { display: grid; grid-template-columns: 1fr 1fr auto; align-items: center; gap: 18px; padding: 18px 20px; border-bottom: 2px solid var(--ink); background: #fffdf8; }
+.rendered-board > header div { display: flex; align-items: center; gap: 10px; }
+.rendered-board > header small { color: var(--muted); font-size: 10px; font-weight: 850; letter-spacing: .08em; }
+.rendered-board > header b { font-size: 14px; }
+.rendered-board > header nav { display: flex; align-items: center; gap: 8px; }
+.rendered-board > header nav span, .rendered-board > header nav strong { padding: 8px 10px; border: 1.5px solid var(--ink); border-radius: 5px; font-size: 10px; white-space: nowrap; }
+.rendered-board > header nav strong { background: var(--ink); color: #fff; }
+.rendered-scene { display: flex; align-items: center; gap: 12px; padding: 16px 20px 10px; }
+.rendered-scene i { flex: 1; height: 1.5px; background: #aaa69a; }
+.rendered-scene b { padding: 5px 18px; border: 1.5px solid #aaa69a; border-radius: 5px; font-size: 12px; }
+.rendered-scene span { color: var(--muted); font-size: 10px; }
+.rendered-shots { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; padding: 12px 20px 20px; }
+.rendered-shots article { overflow: hidden; border: 1.5px solid var(--ink); border-radius: 7px; background: white; box-shadow: 4px 4px 0 var(--yellow); }
+.rendered-shots em { display: block; padding: 8px 10px; background: var(--mint-deep); color: white; font-size: 10px; font-style: normal; font-weight: 850; }
+.rendered-shots article:nth-child(2) em { background: #724015; }
+.rendered-shots article:nth-child(3) em, .rendered-shots article:nth-child(4) em { background: #188eb5; }
+.shot-art { height: clamp(80px, 13vh, 122px); border-bottom: 1.5px solid var(--ink); }
+.art-leaves { background: radial-gradient(circle at 58% 46%, rgba(255,255,255,.9), transparent 22%), linear-gradient(135deg, #b7dbb8, #f1f7e7 48%, #4b9d67); }
+.art-stage { background: radial-gradient(circle at 62% 52%, #f5a28e 0 8%, transparent 9%), linear-gradient(160deg, #4d190d 0 42%, #d94d24 43% 72%, #78200d 73%); }
+.art-screen { background: linear-gradient(25deg, #9b443a 0 22%, #eacdb4 23% 48%, #404f67 49% 64%, #e8d39e 65%); }
+.art-room { background: linear-gradient(150deg, #d9cbb7, #efe8de 42%, #79909c 43% 65%, #49352f 66%); }
+.rendered-shots article b, .rendered-shots article span { display: block; padding: 8px 10px 0; font-size: 11px; }
+.rendered-shots article span { padding-top: 4px; padding-bottom: 9px; color: var(--muted); font-size: 9px; }
+
+/* Registration */
+.slide-register { grid-template-columns: 1.08fr .92fr; align-items: center; gap: 5vw; }
+.register-visual { position: relative; height: min(72vh, 720px); }
+.auth-screen { position: absolute; inset: 0 4% 0 0; }
+.rendered-login { display: flex; flex-direction: column; justify-content: center; width: min(470px, 72%); height: auto; min-height: 570px; margin: auto; padding: 34px; border: 2px solid var(--ink); border-radius: 9px; background: #fffdf8; box-shadow: 8px 8px 0 var(--yellow); }
+.rendered-login h3 { margin: 18px 0 8px; font-size: 28px; }
+.rendered-login p { margin-bottom: 24px; color: var(--muted); }
+.rendered-login label { margin: 0 0 15px; font-size: 13px; font-weight: 750; }
+.rendered-login label i { display: block; height: 45px; margin-top: 6px; border: 1.5px solid #aaa69a; border-radius: 5px; background: white; }
+.rendered-login > button { padding: 13px; border: 2px solid var(--ink); background: var(--ink); color: white; font-weight: 850; }
+.rendered-login footer { margin-top: 38px; color: var(--muted); text-align: center; }
+.rendered-login footer b { color: var(--coral); }
+.account-route { position: absolute; z-index: 2; left: 50%; bottom: 3.5%; display: flex; align-items: center; gap: 10px; padding: 13px 16px; border: 2px solid var(--ink); border-radius: 8px; background: var(--yellow); box-shadow: 5px 5px 0 var(--ink); transform: translateX(-50%); white-space: nowrap; }
+.account-route span { color: var(--muted); font-size: 13px; }
+.account-route b { font-size: 15px; }
+.register-copy .lede { margin-top: 26px; }
+.registration-form-demo { margin-top: 28px; padding: 18px; border: 2px solid var(--ink); border-radius: 10px; background: #fffdf8; box-shadow: 7px 7px 0 var(--ink); }
+.registration-form-demo label { display: grid; grid-template-columns: 100px 1fr; align-items: center; gap: 12px; margin-bottom: 11px; font-size: 14px; font-weight: 850; }
+.registration-form-demo label span { color: var(--muted); font-size: 11px; font-weight: 600; }
+.registration-form-demo label i { grid-column: 1 / -1; height: 30px; margin-top: -5px; border: 1.5px solid #aaa69a; border-radius: 5px; background: #fff; }
+.registration-form-demo .password-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.registration-form-demo .password-pair label { grid-template-columns: auto 1fr; }
+.registration-form-demo button { width: 100%; padding: 10px; border: 2px solid var(--ink); background: var(--ink); color: #fff; font-weight: 850; }
+.register-note { margin-top: 25px; color: var(--muted); font-size: 14px; }
+
+/* Home */
+.slide-home, .slide-flow, .slide-share { grid-template-rows: auto 1fr auto; gap: 24px; }
+.slide-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 30px; }
+.slide-heading .eyebrow { min-width: max-content; }
+.slide-heading h2 { max-width: 1000px; text-align: right; }
+.browser-frame { position: relative; width: 100%; height: min(46vh, 460px); }
+.browser-frame > img { object-fit: contain; object-position: center; background: #f3efe4; }
+.browser-bar { height: 34px; display: flex; align-items: center; gap: 7px; padding: 0 12px; border-bottom: 2px solid var(--ink); background: #fffdf8; }
+.browser-bar i { width: 9px; height: 9px; border-radius: 50%; background: var(--coral); border: 1px solid var(--ink); }
+.browser-bar i:nth-child(2) { background: var(--yellow); }
+.browser-bar i:nth-child(3) { background: var(--mint); }
+.browser-bar span { margin-left: 12px; color: var(--muted); font-size: 11px; }
+.rendered-home { height: min(54vh, 520px); }
+.rendered-home > header { display: grid; grid-template-columns: auto auto 1fr auto minmax(190px, 25%) auto auto auto; align-items: center; gap: 11px; margin: 14px; padding: 13px 15px; border: 1.5px solid var(--ink); border-radius: 7px; background: #fffdf8; box-shadow: 5px 5px 0 var(--ink); }
+.rendered-home > header div { display: flex; flex-direction: column; }
+.rendered-home > header div small { color: var(--muted); font-size: 8px; }
+.rendered-home > header label { margin-left: auto; font-size: 10px; font-weight: 800; }
+.rendered-home input, .rendered-home select, .rendered-home button { padding: 8px 9px; border: 1.2px solid #aaa69a; border-radius: 4px; background: white; font-size: 9px; }
+.rendered-home > header > span { font-size: 9px; }
+.rendered-project-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; padding: 12px 28px 24px; }
+.rendered-project-grid article { min-width: 0; }
+.rendered-project-grid .cover, .rendered-project-grid .create > strong { height: clamp(130px, 22vh, 190px); border: 1.5px solid var(--ink); border-radius: 5px; box-shadow: 5px 5px 0 var(--yellow); }
+.rendered-project-grid .create > strong { display: grid; place-items: center; background: #fffdf8; box-shadow: 5px 5px 0 var(--mint); font-size: 38px; }
+.rendered-project-grid article > b { display: block; margin-top: 9px; font-size: 12px; }
+.rendered-project-grid article > small { display: block; margin-top: 6px; color: #7d9abc; font-size: 8px; }
+.feature-ribbon { display: flex; justify-content: center; align-items: center; gap: 18px; font-size: clamp(14px, 1.2vw, 19px); font-weight: 800; }
+.feature-ribbon i { width: 34px; height: 2px; background: var(--ink); transform-origin: left; }
+
+/* Flow */
+.compact-heading h2 { max-width: 1100px; }
+.flow-screen { position: relative; min-height: 0; }
+.rendered-flow { display: grid; grid-template-rows: auto auto 1fr; overflow: hidden; border: 2px solid var(--ink); border-radius: 10px; background: #fffdf8; box-shadow: 8px 8px 0 var(--ink); }
+.rendered-flow > header { display: grid; grid-template-columns: 1fr 1fr auto; align-items: center; gap: 20px; padding: 15px 18px; border-bottom: 2px solid var(--ink); }
+.rendered-flow > header div { display: flex; gap: 9px; align-items: center; }
+.rendered-flow > header small { color: var(--muted); font-size: 9px; }
+.rendered-flow > header b { font-size: 12px; }
+.rendered-flow nav { display: flex; align-items: center; gap: 9px; font-size: 10px; }
+.rendered-flow nav strong { padding: 7px 12px; border: 1.5px solid var(--ink); border-radius: 4px; }
+.rendered-flow nav button { padding: 8px 12px; border: 1.5px solid var(--ink); border-radius: 4px; background: var(--ink); color: white; }
+.scene-divider { display: flex; align-items: center; gap: 9px; padding: 13px 18px; }
+.scene-divider i { flex: 1; height: 1.5px; background: #aaa69a; }
+.scene-divider b { padding: 5px 18px; border: 1.5px solid #aaa69a; border-radius: 4px; font-size: 11px; }
+.scene-divider span { color: var(--muted); font-size: 9px; }
+.flow-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; padding: 5px 18px 18px; }
+.flow-cards article { overflow: hidden; border: 1.5px solid var(--ink); border-radius: 5px; background: white; box-shadow: 4px 4px 0 var(--yellow); }
+.flow-cards em { display: block; padding: 8px 10px; background: var(--mint-deep); color: white; font-size: 10px; font-style: normal; font-weight: 850; }
+.flow-cards article:nth-child(2) em { background: #724015; }
+.flow-cards article:nth-child(3) em { background: #188eb5; }
+.flow-art { height: clamp(130px, 26vh, 225px); border-bottom: 1.5px solid var(--ink); }
+.stage-cover { background: radial-gradient(circle at 62% 52%, #f5a28e 0 8%, transparent 9%), linear-gradient(160deg, #4d190d 0 42%, #d94d24 43% 72%, #78200d 73%); }
+.phone-cover { background: linear-gradient(25deg, #9b443a 0 22%, #eacdb4 23% 48%, #404f67 49% 64%, #e8d39e 65%); }
+.flow-cards article > b { display: block; padding: 10px; font-size: 11px; text-align: center; }
+.flow-caption { display: flex; justify-content: center; gap: clamp(24px, 4vw, 72px); color: var(--muted); font-size: 14px; }
+.flow-caption b { color: var(--ink); }
+
+/* Batch */
+.slide-batch { grid-template-columns: .66fr 1.34fr; align-items: center; gap: 5vw; }
+.split-copy .lede { margin-top: 28px; }
+.batch-screen { position: relative; height: min(70vh, 700px); }
+.rendered-batch { display: grid; place-items: center; background: transparent; }
+.selected-cards { width: 84%; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.selected-cards article { overflow: hidden; border: 3px solid #ef9c8f; border-radius: 7px; background: #fffdf8; box-shadow: 4px 4px 0 var(--yellow); }
+.selected-cards header { display: flex; justify-content: space-between; padding: 10px; background: #78bd7b; color: white; font-size: 11px; font-weight: 850; }
+.selected-cards header b { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%; background: var(--coral); }
+.empty-shot, .selected-art { height: clamp(180px, 30vh, 280px); display: grid; place-items: center; border-bottom: 1.5px solid var(--ink); background: #e9e2d2; color: #8b877d; font-size: 52px; }
+.selected-cards article > span { display: block; padding: 14px; text-align: center; font-size: 12px; }
+.rendered-batch menu { position: absolute; right: 9%; top: 38%; min-width: 210px; display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 16px; border: 2px solid var(--ink); border-radius: 6px; background: #fffdf8; box-shadow: 6px 6px 0 var(--ink); }
+.rendered-batch menu button { padding: 0 0 10px; border: 0; border-bottom: 1px solid #ddd6c7; background: transparent; color: #e21e19; text-align: left; font-weight: 850; }
+.rendered-batch menu small { color: var(--muted); }
+.rendered-batch menu b { font-size: 12px; }
+.keyline { display: flex; align-items: center; gap: 13px; margin-top: 36px; color: var(--muted); font-size: 13px; }
+.keyline span::before { content: "→"; margin-right: 13px; color: var(--ink); }
+kbd { padding: 6px 9px; border: 2px solid var(--ink); border-radius: 6px; background: var(--yellow); box-shadow: 3px 3px 0 var(--ink); font-weight: 800; }
+
+/* Share */
+.share-heading h2 { max-width: 900px; }
+.share-screen { min-height: 0; position: relative; }
+.rendered-share { width: min(800px, 62vw); justify-self: center; overflow: hidden; border: 2px solid var(--ink); border-radius: 8px; background: #fffdf8; box-shadow: 8px 8px 0 var(--yellow); }
+.rendered-share > header { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1.5px solid #aaa69a; }
+.rendered-share h3, .rendered-share h4 { margin: 0; }
+.rendered-share > header button { border: 0; background: transparent; font-size: 22px; font-weight: 850; }
+.rendered-share section { padding: 13px 18px; border-bottom: 1px solid #d7d0c2; }
+.rendered-share h4 { margin-bottom: 10px; font-size: 13px; }
+.rendered-share form { display: grid; grid-template-columns: 1.4fr .7fr auto; gap: 8px; }
+.rendered-share form i { padding: 9px 11px; border: 1px solid #aaa69a; border-radius: 4px; color: var(--muted); font-size: 10px; font-style: normal; }
+.rendered-share form b { padding: 9px 11px; border-radius: 4px; background: var(--ink); color: white; font-size: 10px; }
+.rendered-share form .danger { background: #c72224; }
+.member { display: flex; align-items: center; justify-content: space-between; padding: 9px 0 0; }
+.member p { display: flex; flex-direction: column; }
+.member strong { font-size: 12px; }
+.member small { color: var(--muted); font-size: 9px; }
+.member button { padding: 6px 9px; border: 1px solid var(--ink); border-radius: 4px; background: white; font-size: 9px; }
+.roles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.role { padding-top: 12px; border-top: 4px solid var(--mint-deep); }
+.role strong { display: block; font-size: 13px; letter-spacing: .12em; }
+.role span { display: block; margin-top: 5px; color: var(--muted); font-size: 13px; }
+.role:nth-child(2) { border-color: var(--yellow); }
+.role:nth-child(3) { border-color: var(--blue); }
+.role-link { border-style: dashed; border-color: var(--coral); }
+
+/* Delivery */
+.slide-deliver { grid-template-columns: 1.35fr .65fr; align-items: center; gap: 5vw; }
+.deliver-visual { position: relative; height: min(72vh, 720px); }
+.pdf-preview { position: absolute; inset: 5% 10% 12% 0; display: grid; grid-template-rows: auto 1fr auto; padding: 24px; border: 2px solid var(--ink); border-radius: 12px; background: #fffdf8; box-shadow: 12px 12px 0 var(--ink); }
+.pdf-preview header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 14px; border-bottom: 2px solid var(--ink); }
+.pdf-preview header span { font-size: 23px; font-weight: 900; }
+.pdf-preview header b { color: var(--muted); font-size: 13px; }
+.pdf-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 13px; padding: 20px 0; }
+.pdf-grid i { border: 1.5px solid var(--ink); background: linear-gradient(to bottom, var(--mint) 0 15%, transparent 15% 68%, var(--line) 68% 70%, transparent 70% 80%, var(--line) 80% 82%, transparent 82%); box-shadow: 3px 3px 0 var(--yellow); }
+.pdf-grid i:nth-child(3n+2) { background: linear-gradient(to bottom, var(--yellow) 0 15%, transparent 15% 68%, var(--line) 68% 70%, transparent 70% 80%, var(--line) 80% 82%, transparent 82%); }
+.pdf-preview footer { padding-top: 12px; border-top: 1.5px solid var(--ink); color: var(--muted); font-size: 12px; }
+.export-window { position: absolute; z-index: 3; right: 0; top: 9%; display: flex; gap: 10px; align-items: center; padding: 10px 12px; border: 2px solid var(--ink); border-radius: 8px; background: var(--yellow); box-shadow: 6px 6px 0 var(--ink); font-weight: 850; opacity: 0; transform: scale(.6); }
+.export-window button { padding: 12px 16px; border: 1.5px solid var(--ink); border-radius: 5px; background: #fffdf8; font-weight: 850; }
+.is-active .export-window { animation: export-pop .65s .8s cubic-bezier(.16,.9,.2,1.2) forwards; }
+.paper-stack { position: absolute; z-index: 4; right: 3%; bottom: 2%; width: 170px; height: 210px; }
+.paper-stack i { position: absolute; inset: 0; border: 2px solid var(--ink); background: #fffdf8; box-shadow: 5px 5px 0 var(--ink); transform: rotate(var(--r)); }
+.paper-stack i:nth-child(1) { --r: -8deg; }
+.paper-stack i:nth-child(2) { --r: 4deg; }
+.paper-stack i:nth-child(3) { --r: 0deg; }
+.paper-stack strong { position: absolute; inset: 0; display: grid; place-items: center; font-size: 45px; letter-spacing: -.05em; opacity: 0; }
+.is-active .paper-stack { animation: paper-fly 1s 1.1s cubic-bezier(.2,.8,.2,1) both; }
+.is-active .paper-stack strong { animation: reveal .5s 1.75s both; }
+.deliver-copy .lede { margin-top: 26px; }
+.save-note { display: flex; align-items: center; gap: 10px; margin-top: 38px; font-weight: 750; }
+.save-led { width: 10px; height: 10px; border-radius: 50%; background: #4fb486; animation: beacon 2s infinite; }
+
+/* Usage */
+.slide-usage { grid-template-rows: auto 1fr auto; gap: 30px; }
+.usage-copy { display: flex; align-items: end; justify-content: space-between; }
+.usage-copy h2 { max-width: 1050px; text-align: right; }
+.steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; align-items: stretch; }
+.steps li { display: flex; flex-direction: column; justify-content: space-between; min-height: 250px; padding: 24px; border: 2px solid var(--ink); border-radius: 10px; background: #fffdf8; box-shadow: 7px 7px 0 var(--ink); }
+.steps li:nth-child(2) { background: var(--mint); }
+.steps li:nth-child(3) { background: var(--yellow); }
+.steps b { font-size: 44px; line-height: 1; color: rgba(37,36,31,.34); }
+.steps strong { font-size: clamp(18px, 1.6vw, 25px); line-height: 1.25; }
+.steps code, .steps span { color: var(--muted); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+.closing-line { display: flex; align-items: center; gap: 14px; padding-top: 18px; border-top: 2px solid var(--ink); }
+.closing-line p { display: flex; flex-direction: column; gap: 3px; }
+.closing-line p span { color: var(--muted); font-size: 13px; }
+.closing-line button { margin-left: auto; padding: 10px 14px; border: 2px solid var(--ink); border-radius: 7px; background: transparent; cursor: pointer; font-weight: 800; }
+
+/* Controls */
+.deck-controls { position: absolute; z-index: 40; right: clamp(20px, 3vw, 50px); bottom: 20px; display: flex; align-items: center; gap: 6px; padding: 6px; border: 1.5px solid var(--ink); border-radius: 10px; background: rgba(255,253,248,.88); box-shadow: 4px 4px 0 var(--ink); backdrop-filter: blur(12px); }
+.deck-controls button { width: 34px; height: 32px; border: 0; border-radius: 6px; background: transparent; cursor: pointer; font-weight: 900; }
+.deck-controls button:hover { background: var(--yellow); }
+.slide-count { min-width: 66px; padding: 0 7px; color: var(--muted); font-size: 11px; text-align: center; }
+.slide-count b { color: var(--ink); font-size: 14px; }
+.progress-track { position: absolute; z-index: 40; left: 0; right: 0; bottom: 0; height: 5px; background: rgba(37,36,31,.13); }
+.progress-track span { display: block; width: 0; height: 100%; background: var(--mint-deep); transition: width .65s cubic-bezier(.2,.8,.2,1); }
+.chapter-label { position: absolute; z-index: 40; left: clamp(22px, 3vw, 52px); bottom: 25px; color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+
+@keyframes reveal { to { opacity: 1; transform: none; } }
+@keyframes reveal-scale { to { opacity: 1; transform: none; } }
+@keyframes screen-in { to { opacity: 1; transform: rotate(4deg) translate(0,0); } }
+@keyframes screen-in-front { to { opacity: 1; transform: rotate(-2deg) translate(0,0); } }
+@keyframes drift { 50% { transform: rotate(3deg) translate(-9px,8px); } }
+@keyframes drift-front { 50% { transform: rotate(-1.2deg) translate(8px,-8px); } }
+@keyframes card-pop { from { opacity: 0; scale: .6; } to { opacity: 1; scale: 1; } }
+@keyframes beacon { 70% { box-shadow: 0 0 0 12px rgba(79,180,134,0); } 100% { box-shadow: 0 0 0 0 rgba(79,180,134,0); } }
+@keyframes grain { 0% { transform: translate(0,0); } 25% { transform: translate(3%,-2%); } 50% { transform: translate(-2%,3%); } 75% { transform: translate(2%,2%); } 100% { transform: translate(-3%,-3%); } }
+@keyframes scan { 0% { transform: translateY(-30%); } 60%,100% { transform: translateY(650%); } }
+@keyframes slow-pan { from { transform: scale(1.02) translateY(0); } to { transform: scale(1.08) translateY(-2.5%); } }
+@keyframes export-pop { to { opacity: 1; transform: scale(1) rotate(1deg); } }
+@keyframes paper-fly { from { opacity: 0; transform: translate(-55%,-25%) rotate(-18deg) scale(.55); } to { opacity: 1; transform: none; } }
+
+@media (max-width: 980px) {
+    .slide { padding: 70px 30px 78px; }
+    .slide-hero, .slide-register, .slide-proof, .slide-batch, .slide-deliver { grid-template-columns: 1fr; gap: 24px; }
+    .hero-copy { align-self: end; }
+    .hero-copy h1 { font-size: clamp(48px, 11vw, 76px); }
+    .brand-lockup { margin-bottom: 3vh; }
+    .hero-visual { height: 42vh; }
+    .slide-register .register-copy, .slide-proof .slide-copy, .slide-batch .split-copy, .slide-deliver .deliver-copy { z-index: 2; }
+    .register-visual, .rendered-board, .batch-screen, .deliver-visual { height: 43vh; }
+    .steps { grid-template-columns: 1fr 1fr; }
+    .steps li { min-height: 150px; }
+    .usage-copy, .slide-heading { align-items: flex-start; flex-direction: column; }
+    .usage-copy h2, .slide-heading h2 { text-align: left; }
+}
+
+@media (max-height: 720px) {
+    .slide { padding-top: 50px; padding-bottom: 62px; }
+    .brand-lockup { margin-bottom: 3vh; }
+    .hero-copy .lede { margin-top: 18px; }
+    .start-cue { margin-top: 24px; }
+    .number-run { margin-top: 24px; padding-top: 18px; }
+    .steps li { min-height: 190px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
+}
+
+    </style>
+</head>
+<body>
+    <main class="deck" id="deck" aria-label="卡片分镜功能演示">
+        <div class="stage-grid" aria-hidden="true"></div>
+        <div class="film-grain" aria-hidden="true"></div>
+
+        <section class="slide slide-hero is-active" data-title="卡片分镜" aria-hidden="false">
+            <div class="hero-copy">
+                <div class="brand-lockup reveal" style="--delay: .08s">
+                    <span class="brand-icon" aria-hidden="true"><i></i><i></i><i></i></span>
+                    <span>卡片分镜</span>
+                </div>
+                <p class="eyebrow reveal" style="--delay: .18s">STORYBOARD, IN MOTION</p>
+                <h1 class="reveal" style="--delay: .28s">把分镜从文件<br>变成共同工作的现场</h1>
+                <p class="lede reveal" style="--delay: .42s">镜头、画面、场次、协作与交付，全部落在一张张可移动的卡片上。</p>
+                <button class="start-cue reveal" style="--delay: .56s" type="button" data-next>
+                    开始演示 <span aria-hidden="true">→</span>
+                </button>
+            </div>
+            <div class="hero-visual" aria-hidden="true">
+                <div class="hero-halo"></div>
+                <div class="floating-screen screen-back mini-home-render">
+                    <header><span class="brand-icon small"><i></i><i></i><i></i></span><b>卡片分镜</b><input aria-label="搜索分镜本" placeholder="搜索分镜本…"></header>
+                    <div class="mini-projects"><article class="new">＋</article><article class="project green"></article><article class="project portrait"></article><article class="project blank"></article></div>
+                </div>
+                <div class="floating-screen screen-front mini-board-render">
+                    <header><b>赏春季 TVC</b><span>杨梅篇</span><strong>＋ 添加分镜</strong></header>
+                    <div class="mini-shot-row"><i></i><i></i><i></i><i></i><i></i></div>
+                    <span class="live-dot"></span>
+                </div>
+                <div class="floating-card card-a"><span>SHOT #08</span><b>9:00—9:30</b></div>
+                <div class="floating-card card-b"><span>SCENE</span><b>杨梅篇</b></div>
+                <div class="floating-card card-c"><span>OUTPUT</span><b>PDF</b></div>
+            </div>
+        </section>
+
+        <section class="slide slide-register" data-title="注册账户" aria-hidden="true">
+            <div class="register-visual">
+                <div class="auth-screen rendered-login reveal-scale" style="--delay: .12s">
+                    <span class="brand-icon"><i></i><i></i><i></i></span>
+                    <h3>登录卡片分镜</h3><p>登录已有账户，继续整理你的分镜本。</p>
+                    <label>用户名<i></i></label><label>密码<i></i></label>
+                    <button type="button" tabindex="-1">登录</button><footer>还没有账户？ <b>创建账户</b></footer>
+                </div>
+                <div class="account-route reveal" style="--delay: .46s" aria-hidden="true">
+                    <span>还没有账户？</span><b>创建账户 →</b>
+                </div>
+            </div>
+            <div class="register-copy">
+                <p class="eyebrow reveal">01 · 注册与登录</p>
+                <h2 class="reveal" style="--delay: .1s">第一次使用，先创建自己的账户</h2>
+                <p class="lede reveal" style="--delay: .22s">在登录页点击“创建账户”，填写四项信息。注册完成后会直接进入“我的分镜本”。</p>
+                <div class="registration-form-demo reveal" style="--delay: .3s" aria-label="注册表单示意">
+                    <label>用户名<span>3–32 位，用于登录</span><i></i></label>
+                    <label>显示名称<span>协作时让成员认出你</span><i></i></label>
+                    <div class="password-pair"><label>密码<span>12–128 位</span><i></i></label><label>确认密码<span>再次输入</span><i></i></label></div>
+                    <button type="button" tabindex="-1">创建账户</button>
+                </div>
+                <p class="register-note reveal" style="--delay: .68s">账户只会看到自己创建或被邀请加入的项目。</p>
+            </div>
+        </section>
+
+        <section class="slide slide-proof" data-title="真实项目" aria-hidden="true">
+            <div class="slide-copy narrow">
+                <p class="eyebrow reveal">真实项目 · 赏春季 TVC</p>
+                <h2 class="reveal" style="--delay: .1s">镜头再多，现场仍然清楚</h2>
+                <p class="lede reveal" style="--delay: .2s">一个真实项目里，画面、动作、景别、台词和时间段同步出现，创作信息不再散落在不同文件里。</p>
+                <div class="number-run reveal" style="--delay: .34s" aria-label="真实项目数据">
+                    <div><strong data-count="70">0</strong><span>分镜条目</span></div>
+                    <div><strong data-count="63">0</strong><span>参考图片</span></div>
+                    <div><strong data-count="4">0</strong><span>场次分段</span></div>
+                </div>
+            </div>
+            <div class="rendered-board reveal-scale" style="--delay: .18s" aria-label="精简渲染的分镜编辑组件">
+                <header><div><small>PROJECT 项目</small><b>赏春季 TVC</b></div><div><small>SCENE 场景</small><b>杨梅篇</b></div><nav><span>16:9</span><span>成员与分享</span><strong>＋ 添加分镜</strong></nav></header>
+                <div class="rendered-scene"><i></i><b>杨梅篇</b><span>25 个镜头</span><i></i></div>
+                <div class="rendered-shots">
+                    <article><em>SHOT #1</em><div class="shot-art art-leaves"></div><b>树影的绿意</b><span>Static 固定</span></article>
+                    <article><em>SHOT #2</em><div class="shot-art art-stage"></div><b>杨梅舞台</b><span>HH 手持</span></article>
+                    <article><em>SHOT #3</em><div class="shot-art art-screen"></div><b>手机屏幕穿梭转场</b><span>Gimbal 稳定器</span></article>
+                    <article><em>SHOT #4</em><div class="shot-art art-room"></div><b>回到生活</b><span>Dolly 轨道</span></article>
+                </div>
+            </div>
+        </section>
+
+        <section class="slide slide-home" data-title="项目总览" aria-hidden="true">
+            <div class="slide-heading">
+                <p class="eyebrow reveal">02 · 项目总览</p>
+                <h2 class="reveal" style="--delay: .1s">从“我的分镜本”开始一天的工作</h2>
+            </div>
+            <div class="browser-frame rendered-home reveal-scale" style="--delay: .16s">
+                <div class="browser-bar" aria-hidden="true"><i></i><i></i><i></i><span>card-storyboard.local</span></div>
+                <header><span class="brand-icon small"><i></i><i></i><i></i></span><div><b>卡片分镜</b><small>我的分镜本</small></div><label>排序 <select tabindex="-1"><option>修改日期</option></select></label><input aria-label="搜索分镜本" placeholder="搜索分镜本…"><span>演示账户</span><button tabindex="-1">账户</button><button tabindex="-1">退出</button></header>
+                <div class="rendered-project-grid"><article class="create"><strong>＋</strong><b>创建新项目</b></article><article><div class="cover leaves-cover"></div><b>赏春季 TVC</b><small>最近修改 2026-08-12</small></article><article><div class="cover face-cover"></div><b>ROKR 八周年·玩力进化</b><small>最近修改 2026-08-11</small></article><article><div class="cover empty-cover"></div><b>秒搭组件</b><small>最近修改 2026-08-11</small></article></div>
+            </div>
+            <div class="feature-ribbon reveal" style="--delay: .46s">
+                <span>创建</span><i></i><span>搜索</span><i></i><span>排序</span><i></i><span>复制</span><i></i><span>置顶</span>
+            </div>
+        </section>
+
+        <section class="slide slide-flow" data-title="组织镜头" aria-hidden="true">
+            <div class="slide-heading compact-heading">
+                <p class="eyebrow reveal">03 · 组织镜头</p>
+                <h2 class="reveal" style="--delay: .1s">场、画幅与顺序，在同一条工作流里</h2>
+            </div>
+            <div class="flow-screen rendered-flow reveal-scale" style="--delay: .16s">
+                <header><div><small>PROJECT 项目</small><b>赏春季 TVC</b></div><div><small>SCENE 场景</small><b>杨梅篇</b></div><nav><span>画幅</span><strong>16:9⌄</strong><button tabindex="-1">＋ 添加分镜</button></nav></header>
+                <div class="scene-divider"><i></i><b>杨梅篇</b><span>(25)</span><i></i></div>
+                <div class="flow-cards"><article><em>☷ SHOT #1</em><div class="flow-art leaves-cover"></div><b>树影的绿意</b></article><article><em>☷ SHOT #2</em><div class="flow-art stage-cover"></div><b>杨梅舞台</b></article><article><em>☷ SHOT #3</em><div class="flow-art phone-cover"></div><b>手机屏幕穿梭转场</b></article></div>
+            </div>
+            <div class="flow-caption reveal" style="--delay: .46s">
+                <span><b>16:9 / 4:3 / 2.35:1 / 9:16</b> 切换画幅</span>
+                <span><b>场次分隔线</b> 折叠、计数、快速定位</span>
+                <span><b>拖拽排序</b> 保持镜头编号一致</span>
+            </div>
+        </section>
+
+        <section class="slide slide-batch" data-title="批量操作" aria-hidden="true">
+            <div class="split-copy">
+                <p class="eyebrow reveal">04 · 批量操作</p>
+                <h2 class="reveal" style="--delay: .1s">一次选中，一起移动</h2>
+                <p class="lede reveal" style="--delay: .22s">多选镜头后，可以批量删除，或直接移动到其他场。长片、广告和多场景脚本，都不必逐张整理。</p>
+                <div class="keyline reveal" style="--delay: .36s"><kbd>多选</kbd><span>选择镜头</span><span>移动到目标场</span></div>
+            </div>
+            <div class="batch-screen rendered-batch reveal-scale" style="--delay: .14s">
+                <div class="selected-cards"><article><header>SHOT #2 <b>✓</b></header><div class="empty-shot">↑</div><span>春天素材</span></article><article><header>SHOT #3 <b>✓</b></header><div class="selected-art phone-cover"></div><span>风带起摇曳的树枝</span></article></div>
+                <menu><button tabindex="-1">批量删除所选镜头</button><small>批量移动到其他场</small><b>移动到 阿饶篇</b><b>移动到 CC篇-户外</b><b>移动到 CC篇-室内</b></menu>
+            </div>
+        </section>
+
+        <section class="slide slide-share" data-title="协作分享" aria-hidden="true">
+            <div class="slide-heading share-heading">
+                <p class="eyebrow reveal">05 · 协作与权限</p>
+                <h2 class="reveal" style="--delay: .1s">让对的人，看到恰好的内容</h2>
+            </div>
+            <div class="share-screen rendered-share reveal-scale" style="--delay: .14s">
+                <header><h3>成员与分享</h3><button tabindex="-1">×</button></header>
+                <section><h4>项目成员</h4><form><i>准确用户名</i><i>可编辑⌄</i><b>添加或更新</b></form><div class="member"><p><strong>演示账户</strong><small>presentation_demo · 所有者</small></p></div><div class="member"><p><strong>大禽叉</strong><small>daqincha · 可编辑</small></p><button tabindex="-1">移除</button></div></section>
+                <section><h4>匿名只读链接</h4><form><i>链接备注</i><i>7 天⌄</i><b>创建链接</b></form></section>
+                <section><h4>转移所有权</h4><form><i>新所有者用户名</i><i>当前密码</i><b class="danger">转移</b></form></section>
+            </div>
+            <div class="roles" aria-label="项目权限层级">
+                <div class="role reveal" style="--delay: .34s"><strong>OWNER</strong><span>管理成员与分享</span></div>
+                <div class="role reveal" style="--delay: .42s"><strong>EDITOR</strong><span>查看并编辑项目</span></div>
+                <div class="role reveal" style="--delay: .5s"><strong>VIEWER</strong><span>只读审阅</span></div>
+                <div class="role role-link reveal" style="--delay: .58s"><strong>LINK</strong><span>限时匿名只读</span></div>
+            </div>
+        </section>
+
+        <section class="slide slide-deliver" data-title="交付" aria-hidden="true">
+            <div class="deliver-visual" aria-hidden="true">
+                <div class="pdf-preview reveal-scale">
+                    <header><span>赏春季 TVC</span><b>杨梅篇 · 16:9</b></header>
+                    <div class="pdf-grid"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+                    <footer>镜头顺序 · 参考图 · 动作 · 台词</footer>
+                </div>
+                <div class="export-window"><button tabindex="-1">⇩&nbsp; 导出 PDF</button><b>一键生成</b></div>
+                <div class="paper-stack"><i></i><i></i><i></i><strong>PDF</strong></div>
+            </div>
+            <div class="deliver-copy">
+                <p class="eyebrow reveal">06 · 交付</p>
+                <h2 class="reveal" style="--delay: .1s">交付，不是另一个流程</h2>
+                <p class="lede reveal" style="--delay: .22s">项目按当前画幅自动分页，镜头顺序、图片与文字一起进入 PDF，直接用于审片、拍摄或存档。</p>
+                <div class="save-note reveal" style="--delay: .36s"><span class="save-led"></span>编辑状态自动保存</div>
+            </div>
+        </section>
+
+        <section class="slide slide-usage" data-title="开始使用" aria-hidden="true">
+            <div class="usage-copy">
+                <p class="eyebrow reveal">开始使用</p>
+                <h2 class="reveal" style="--delay: .1s">四步，把团队带进同一块分镜板</h2>
+            </div>
+            <ol class="steps">
+                <li class="reveal" style="--delay: .2s"><b>01</b><strong>打开团队提供的网址</strong><span>电脑、平板或手机浏览器均可访问</span></li>
+                <li class="reveal" style="--delay: .3s"><b>02</b><strong>创建个人账户</strong><span>填写用户名、显示名称与密码</span></li>
+                <li class="reveal" style="--delay: .4s"><b>03</b><strong>新建第一个项目</strong><span>选择画幅，按场次添加镜头</span></li>
+                <li class="reveal" style="--delay: .5s"><b>04</b><strong>邀请成员一起工作</strong><span>按需要授予编辑或只读权限</span></li>
+            </ol>
+            <div class="closing-line reveal" style="--delay: .68s">
+                <span class="brand-icon small" aria-hidden="true"><i></i><i></i><i></i></span>
+                <p><b>卡片分镜</b><span>让创作信息跟着镜头一起流动。</span></p>
+                <button type="button" data-restart>重新播放 ↺</button>
+            </div>
+        </section>
+
+        <nav class="deck-controls" aria-label="演示控制">
+            <button type="button" data-prev aria-label="上一幕">←</button>
+            <button type="button" class="play-toggle" data-play aria-label="暂停自动播放" aria-pressed="true">Ⅱ</button>
+            <button type="button" data-next aria-label="下一幕">→</button>
+            <span class="slide-count"><b id="current-slide">01</b> / <span id="total-slides">09</span></span>
+        </nav>
+
+        <div class="progress-track" aria-hidden="true"><span id="progress-bar"></span></div>
+        <div class="chapter-label" id="chapter-label" aria-live="polite">卡片分镜</div>
+    </main>
+    <script>
+(() => {
+    const deck = document.getElementById('deck');
+    const slides = Array.from(deck.querySelectorAll('.slide'));
+    const currentLabel = document.getElementById('current-slide');
+    const totalLabel = document.getElementById('total-slides');
+    const progress = document.getElementById('progress-bar');
+    const chapter = document.getElementById('chapter-label');
+    const playButton = deck.querySelector('[data-play]');
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const autoplayDelay = 8200;
+    let index = 0;
+    let playing = !reducedMotion;
+    let timer = null;
+    let wheelLocked = false;
+    let touchStartX = 0;
+
+    totalLabel.textContent = String(slides.length).padStart(2, '0');
+
+    function animateCounts(slide) {
+        slide.querySelectorAll('[data-count]').forEach((node) => {
+            const target = Number(node.dataset.count);
+            const duration = reducedMotion ? 0 : 900;
+            const start = performance.now();
+            const tick = (now) => {
+                const ratio = duration === 0 ? 1 : Math.min(1, (now - start) / duration);
+                const eased = 1 - Math.pow(1 - ratio, 3);
+                node.textContent = String(Math.round(target * eased));
+                if (ratio < 1) requestAnimationFrame(tick);
+            };
+            requestAnimationFrame(tick);
+        });
+    }
+
+    function updateControls() {
+        currentLabel.textContent = String(index + 1).padStart(2, '0');
+        progress.style.width = `${((index + 1) / slides.length) * 100}%`;
+        chapter.textContent = slides[index].dataset.title || '';
+        playButton.textContent = playing ? 'Ⅱ' : '▶';
+        playButton.setAttribute('aria-label', playing ? '暂停自动播放' : '继续自动播放');
+        playButton.setAttribute('aria-pressed', String(playing));
+    }
+
+    function schedule() {
+        window.clearTimeout(timer);
+        if (!playing) return;
+        timer = window.setTimeout(() => {
+            if (index === slides.length - 1) {
+                playing = false;
+                updateControls();
+                return;
+            }
+            show(index + 1);
+        }, autoplayDelay);
+    }
+
+    function show(nextIndex, options = {}) {
+        const target = Math.max(0, Math.min(slides.length - 1, nextIndex));
+        if (target === index && !options.force) {
+            schedule();
+            return;
+        }
+
+        const current = slides[index];
+        current.classList.remove('is-active');
+        current.classList.add('is-exiting');
+        current.setAttribute('aria-hidden', 'true');
+        window.setTimeout(() => current.classList.remove('is-exiting'), 760);
+
+        index = target;
+        const next = slides[index];
+        next.classList.remove('is-active');
+        void next.offsetWidth;
+        next.classList.add('is-active');
+        next.setAttribute('aria-hidden', 'false');
+        animateCounts(next);
+        updateControls();
+        schedule();
+    }
+
+    function next() { show(index === slides.length - 1 ? 0 : index + 1); }
+    function previous() { show(index === 0 ? slides.length - 1 : index - 1); }
+    function togglePlay() { playing = !playing; updateControls(); schedule(); }
+
+    deck.querySelectorAll('[data-next]').forEach((button) => button.addEventListener('click', next));
+    deck.querySelectorAll('[data-prev]').forEach((button) => button.addEventListener('click', previous));
+    deck.querySelectorAll('[data-restart]').forEach((button) => button.addEventListener('click', () => {
+        playing = !reducedMotion;
+        show(0, { force: true });
+    }));
+    playButton.addEventListener('click', togglePlay);
+
+    window.addEventListener('keydown', (event) => {
+        if (['ArrowRight', 'ArrowDown', 'PageDown'].includes(event.key)) { event.preventDefault(); next(); }
+        if (['ArrowLeft', 'ArrowUp', 'PageUp'].includes(event.key)) { event.preventDefault(); previous(); }
+        if (event.key === ' ') { event.preventDefault(); togglePlay(); }
+        if (event.key === 'Home') { event.preventDefault(); show(0); }
+        if (event.key === 'End') { event.preventDefault(); show(slides.length - 1); }
+    });
+
+    window.addEventListener('wheel', (event) => {
+        if (wheelLocked || Math.abs(event.deltaY) < 24) return;
+        wheelLocked = true;
+        event.deltaY > 0 ? next() : previous();
+        window.setTimeout(() => { wheelLocked = false; }, 850);
+    }, { passive: true });
+
+    window.addEventListener('touchstart', (event) => { touchStartX = event.changedTouches[0].clientX; }, { passive: true });
+    window.addEventListener('touchend', (event) => {
+        const distance = event.changedTouches[0].clientX - touchStartX;
+        if (Math.abs(distance) < 50) return;
+        distance < 0 ? next() : previous();
+    }, { passive: true });
+
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) window.clearTimeout(timer);
+        else schedule();
+    });
+
+    updateControls();
+    animateCounts(slides[0]);
+    schedule();
+})();
+
+    </script>
+</body>
+</html>

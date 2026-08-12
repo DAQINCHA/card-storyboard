@@ -113,6 +113,8 @@ html.preload-view-editor #editor-view.hidden {
     margin: 0 auto;
     padding: 1.25rem 1.4rem 2rem;
     background: var(--bg-color);
+    display: flex;
+    flex-direction: column;
     line-height: 1.68;
     font-size: 0.92rem;
 }
@@ -237,6 +239,16 @@ html.preload-view-editor #editor-view.hidden {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
     gap: 1.25rem;
+}
+
+.home-footer {
+    width: 100%;
+    margin-top: auto;
+    padding: 2.5rem 1rem 0;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    letter-spacing: 0.02em;
+    text-align: center;
 }
 
 .projects-grid.is-admin-grouped {

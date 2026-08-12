@@ -45,6 +45,13 @@ const ACCESS_ROLE_LABELS = Object.freeze({
 });
 
 document.addEventListener('DOMContentLoaded', async () => {
+    const copyrightYear = document.getElementById('copyright-year');
+    if (copyrightYear) {
+        const currentYear = String(new Date().getFullYear());
+        copyrightYear.textContent = currentYear;
+        copyrightYear.dateTime = currentYear;
+    }
+
     const accessContext = await bootstrapAccess();
     if (!accessContext) {
         document.documentElement.classList.remove('preload-view-home', 'preload-view-editor');
