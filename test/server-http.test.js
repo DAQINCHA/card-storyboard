@@ -226,6 +226,23 @@ test('authenticates with HttpOnly session and enforces CSRF, edit locks and proj
   });
 });
 
+test('numbers default project names independently for each owner account', async () => {
+  await withServer(async (baseUrl) => {
+    const admin = await login(baseUrl);
+    const adminFirst = await api(baseUrl, admin, '/api/projects', { method: 'POST', body: {} });
+    const adminSecond = await api(baseUrl, admin, '/api/projects', { method: 'POST', body: {} });
+    assert.equal((await adminFirst.json()).name, '新项目 1');
+    assert.equal((await adminSecond.json()).name, '新项目 2');
+
+    await createAccount(baseUrl, admin, 'independent.names');
+    const account = await activateAccount(baseUrl, 'independent.names');
+    const accountFirst = await api(baseUrl, account, '/api/projects', { method: 'POST', body: {} });
+    const accountSecond = await api(baseUrl, account, '/api/projects', { method: 'POST', body: {} });
+    assert.equal((await accountFirst.json()).name, '新项目 1');
+    assert.equal((await accountSecond.json()).name, '新项目 2');
+  });
+});
+
 test('allows self-registration with an immediate restricted session and enforces validation and rate limits', async () => {
   await withServer(async (baseUrl, _databasePath, application) => {
     const configResponse = await fetch(`${baseUrl}/api/auth/config`);

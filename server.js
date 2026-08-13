@@ -334,21 +334,25 @@ function createStoryboardStore(databasePath) {
     return result;
   }
 
-  function buildNextProjectName() {
-    const names = new Set(db.prepare('SELECT name FROM projects').all().map((row) => String(row.name || '').trim()));
-    if (!names.has('新项目')) return '新项目';
-    let suffix = 2;
+  function buildNextProjectName(user) {
+    const names = new Set(db.prepare(`
+      SELECT p.name
+      FROM projects p
+      JOIN project_members pm ON pm.project_id = p.id
+      WHERE pm.user_id = ? AND pm.role = 'owner'
+    `).all(user.id).map((row) => String(row.name || '').trim()));
+    let suffix = 1;
     while (names.has(`新项目 ${suffix}`)) suffix += 1;
     return `新项目 ${suffix}`;
   }
 
   function createProject(user, payload = {}) {
     const requestedName = String(payload.name || '').trim();
-    const name = requestedName && requestedName !== '新项目' ? requestedName : buildNextProjectName();
     const sourceId = normalizeProjectId(payload.sourceProjectId);
     const row = transaction(() => {
       let source = null;
       if (sourceId) source = requireProjectAccess(sourceId, user, 'duplicate');
+      const name = requestedName && requestedName !== '新项目' ? requestedName : buildNextProjectName(user);
       const result = createProjectStmt.run(name);
       const projectId = Number(result.lastInsertRowid);
       const now = Date.now();
