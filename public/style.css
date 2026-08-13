@@ -2872,7 +2872,7 @@ body.is-sorting {
 
 @media print {
     @page {
-        size: A4 landscape;
+        size: 16in 9in;
         margin: 8mm 10mm 14mm 10mm;
     }
 
@@ -2981,10 +2981,10 @@ body.is-sorting {
         box-sizing: border-box;
     }
 
-    /* Force 4-column layout exactly for A4/A3 Landscape */
+    /* Force a 5-column layout so each print page contains 2 rows of 5 cards */
     .print-grid {
         display: grid;
-        grid-template-columns: repeat(4, 1fr);
+        grid-template-columns: repeat(5, 1fr);
         gap: 6px;
         width: 100%;
     }
@@ -3057,7 +3057,7 @@ body.is-sorting {
         word-break: break-word;
     }
 
-    /* Keep 4:3 cards on a 4x2 grid in A4 landscape print */
+    /* Keep 4:3 cards on a 5x2 grid in 16:9 print */
     .print-pages[data-print-aspect="4/3"] .print-page .project-header {
         padding-bottom: 0.45rem;
         margin-bottom: 0.45rem;
@@ -3100,14 +3100,14 @@ body.is-sorting {
         width: calc(100% - 1.2rem);
     }
 
-    /* Keep 9:16 cards compact enough for 4x2 cards per A4 portrait page */
+    /* Keep 9:16 cards compact enough for 5x2 cards per 16:9 page */
     .print-pages[data-print-aspect="9/16"] .print-page .project-header {
         padding-bottom: 0.4rem;
         margin-bottom: 0.4rem;
     }
 
     .print-pages[data-print-aspect="9/16"] .print-grid {
-        grid-template-columns: repeat(4, minmax(0, 1fr));
+        grid-template-columns: repeat(5, minmax(0, 1fr));
         gap: 3px;
     }
 

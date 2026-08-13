@@ -1904,7 +1904,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         styleEl.textContent = `
             @media print {
                 @page {
-                    size: A4 portrait;
+                    size: 16in 9in;
                     margin: 8mm 10mm 14mm 10mm;
                 }
             }
@@ -2104,7 +2104,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         applyPrintPageSizeOverride(printAspect);
         const headerSource = appContainer.querySelector('.project-header');
-        const cardsPerPage = 8;
+        const cardsPerPage = 10;
         const pagesFragment = document.createDocumentFragment();
         if (!headerSource) {
             return;
