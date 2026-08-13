@@ -248,12 +248,12 @@ async function openAdminDialog() {
     const render = async () => {
         const users = await apiRequest('/api/admin/users');
         list.innerHTML = '<h3>现有账户</h3>';
-        users.forEach((user) => {
+        users.filter((user) => !user.isAdmin).forEach((user) => {
             const row = document.createElement('div');
             row.className = 'admin-user-row';
             row.innerHTML = `<div><strong></strong><small></small></div><div class="row-actions"></div>`;
             row.querySelector('strong').textContent = user.displayName || user.username;
-            row.querySelector('small').textContent = `${user.username} · ${user.isAdmin ? '管理员' : '普通账户'} · ${user.isActive ? '启用' : '停用'} · 拥有 ${user.ownedProjects} 个项目`;
+            row.querySelector('small').textContent = `${user.username} · ${user.isActive ? '启用' : '停用'} · 拥有 ${user.ownedProjects} 个项目`;
             const actions = row.querySelector('.row-actions');
             const reset = document.createElement('button');
             reset.type = 'button'; reset.className = 'secondary-btn compact-btn'; reset.textContent = '重制密码';
