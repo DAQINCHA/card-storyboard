@@ -1,5 +1,6 @@
 export const DEFAULT_TEXT_COLOR_TOKEN = '__default_text_color__';
-export const DEFAULT_SCENE_HEADER_COLOR = '#64748b';
+export const DEFAULT_SCENE_HEADER_COLOR = '#fffdf8';
+export const LEGACY_DEFAULT_SCENE_HEADER_COLOR = '#64748b';
 export const WHITE_TEXT_MIN_CONTRAST = 3.8;
 
 export const TEXT_COLOR_OPTIONS = [
@@ -126,6 +127,11 @@ function parseHexColor(hex) {
     };
 }
 
+function normalizeHexColor(hex) {
+    const parsed = parseHexColor(hex);
+    return parsed ? rgbToHex(parsed.r, parsed.g, parsed.b) : null;
+}
+
 function getRelativeLuminance(hex) {
     const rgb = parseHexColor(hex);
     if (!rgb) {
@@ -187,6 +193,25 @@ export function ensureWhiteTextReadableHex(inputHex, minContrast = WHITE_TEXT_MI
     return safeHex;
 }
 
+export function normalizeSceneHeaderColor(inputHex) {
+    const normalizedHex = normalizeHexColor(inputHex);
+    if (!normalizedHex) {
+        return inputHex;
+    }
+    if (normalizedHex === LEGACY_DEFAULT_SCENE_HEADER_COLOR) {
+        return DEFAULT_SCENE_HEADER_COLOR;
+    }
+    if (normalizedHex === DEFAULT_SCENE_HEADER_COLOR) {
+        return DEFAULT_SCENE_HEADER_COLOR;
+    }
+    return ensureWhiteTextReadableHex(normalizedHex);
+}
+
+export function isLightSceneHeaderColor(inputHex) {
+    const luminance = getRelativeLuminance(inputHex);
+    return luminance !== null && luminance >= 0.7;
+}
+
 export function buildPresetSceneColorRows() {
     const colorRows = [
         ['#e81f1f', '#8f740d', '#29b52c', '#1b89ad', '#a334da'],
@@ -194,5 +219,5 @@ export function buildPresetSceneColorRows() {
         ['#d65800', '#6f3b12', '#085f17', DEFAULT_SCENE_HEADER_COLOR, '#000000']
     ];
 
-    return colorRows.map((row) => row.map((hex) => ensureWhiteTextReadableHex(hex)));
+    return colorRows.map((row) => row.map((hex) => normalizeSceneHeaderColor(hex)));
 }

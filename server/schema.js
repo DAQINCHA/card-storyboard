@@ -3,13 +3,16 @@ const { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync,
 const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const MIGRATIONS = Object.freeze({
   1: 'accounts-sharing-and-edit-locks',
-  2: 'project-scoped-reusable-share-links'
+  2: 'project-scoped-reusable-share-links',
+  3: 'writing-area-default-scene-header-colors'
 });
 const MIGRATION_NAME = MIGRATIONS[SCHEMA_VERSION];
 const MIGRATION_CHECKSUM = crypto.createHash('sha256').update(MIGRATION_NAME).digest('hex');
+const LEGACY_DEFAULT_SCENE_HEADER_COLOR = '#64748b';
+const DEFAULT_SCENE_HEADER_COLOR = '#fffdf8';
 
 function migrationChecksum(version) {
   return crypto.createHash('sha256').update(MIGRATIONS[version]).digest('hex');
@@ -218,6 +221,50 @@ function createVersionTwoSchema(db) {
   `);
 }
 
+function migrateSceneHeaderColors(shotsJson) {
+  let shots;
+  try {
+    shots = JSON.parse(shotsJson || '[]');
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(shots)) return null;
+
+  let changed = false;
+  const migratedShots = shots.map((shot) => {
+    if (!shot || typeof shot !== 'object' || Array.isArray(shot)) return shot;
+    const headerColor = typeof shot.headerColor === 'string' ? shot.headerColor.trim().toLowerCase() : '';
+    if (headerColor !== LEGACY_DEFAULT_SCENE_HEADER_COLOR) return shot;
+    changed = true;
+    return { ...shot, headerColor: DEFAULT_SCENE_HEADER_COLOR };
+  });
+
+  return changed ? JSON.stringify(migratedShots) : null;
+}
+
+function createVersionThreeSchema(db) {
+  const updateProject = db.prepare('UPDATE projects SET shots_json = ? WHERE id = ?');
+  db.prepare('SELECT id, shots_json FROM projects').all().forEach((project) => {
+    const migratedShotsJson = migrateSceneHeaderColors(project.shots_json);
+    if (migratedShotsJson !== null) updateProject.run(migratedShotsJson, project.id);
+  });
+}
+
+function collectProjectRows(db) {
+  return db.prepare('SELECT id, name, scene, aspect_ratio, shots_json, updated_at FROM projects ORDER BY id').all();
+}
+
+function assertExpectedProjectData(db, beforeProjects) {
+  const expectedProjects = beforeProjects.map((project) => ({
+    ...project,
+    shots_json: migrateSceneHeaderColors(project.shots_json) || project.shots_json
+  }));
+  const actualProjects = collectProjectRows(db);
+  if (JSON.stringify(expectedProjects) !== JSON.stringify(actualProjects)) {
+    throw new Error('Existing project data changed unexpectedly during migration');
+  }
+}
+
 function assertMigrationMetadata(db, version) {
   const migration = db.prepare('SELECT name, checksum FROM schema_migrations WHERE version = ?').get(version);
   if (!migration || migration.name !== MIGRATIONS[version] || migration.checksum !== migrationChecksum(version)) {
@@ -248,16 +295,18 @@ function migrateDatabase(databasePath) {
     }
     return { migrated: false, backup: null };
   }
-  if (version !== 1) {
+  if (![1, 2].includes(version)) {
     db.close();
     const direction = version < 1 ? 'setup-admin or migration is required' : 'database is newer than this application';
     throw new Error(`Unsupported database schema version ${version}; ${direction}`);
   }
   let before;
+  let beforeProjects;
   let integrity;
   try {
-    assertMigrationMetadata(db, 1);
+    Object.keys(MIGRATIONS).map(Number).filter((item) => item <= version).forEach((item) => assertMigrationMetadata(db, item));
     before = collectDataFingerprint(db);
+    beforeProjects = collectProjectRows(db);
     integrity = db.prepare('PRAGMA integrity_check').all();
   } finally {
     db.close();
@@ -270,16 +319,18 @@ function migrateDatabase(databasePath) {
   db = openDatabase(databasePath);
   db.exec('BEGIN EXCLUSIVE');
   try {
-    if (getSchemaVersion(db) !== 1) throw new Error('Database schema changed while migration was starting');
-    assertMigrationMetadata(db, 1);
-    createVersionTwoSchema(db);
-    db.prepare('INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)')
-      .run(SCHEMA_VERSION, MIGRATION_NAME, MIGRATION_CHECKSUM, Date.now());
-    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
-    const after = collectDataFingerprint(db);
-    if (JSON.stringify(before) !== JSON.stringify(after)) {
-      throw new Error('Existing project or image data changed during migration');
+    if (getSchemaVersion(db) !== version) throw new Error('Database schema changed while migration was starting');
+    Object.keys(MIGRATIONS).map(Number).filter((item) => item <= version).forEach((item) => assertMigrationMetadata(db, item));
+    for (let nextVersion = version + 1; nextVersion <= SCHEMA_VERSION; nextVersion += 1) {
+      if (nextVersion === 2) createVersionTwoSchema(db);
+      if (nextVersion === 3) createVersionThreeSchema(db);
+      db.prepare('INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)')
+        .run(nextVersion, MIGRATIONS[nextVersion], migrationChecksum(nextVersion), Date.now());
+      db.exec(`PRAGMA user_version = ${nextVersion}`);
     }
+    const after = collectDataFingerprint(db);
+    assertExpectedProjectData(db, beforeProjects);
+    if (before.imageCount !== after.imageCount || before.imageHash !== after.imageHash) throw new Error('Existing image data changed during migration');
     const foreignKeyErrors = db.prepare('PRAGMA foreign_key_check').all();
     if (foreignKeyErrors.length) throw new Error('Foreign key validation failed after migration');
     db.exec('COMMIT');
@@ -303,6 +354,7 @@ function setupDatabase({ databasePath, username, displayName, passwordHash, must
     throw new Error(`Database is already initialized at schema version ${version}`);
   }
   const before = collectDataFingerprint(db);
+  const beforeProjects = collectProjectRows(db);
   const integrity = db.prepare('PRAGMA integrity_check').all();
   if (integrity.length !== 1 || integrity[0].integrity_check !== 'ok') {
     db.close();
@@ -331,12 +383,14 @@ function setupDatabase({ databasePath, username, displayName, passwordHash, must
     `).run(adminId, adminId, now, now);
     createVersionTwoSchema(db);
     db.prepare('INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)')
-      .run(SCHEMA_VERSION, MIGRATION_NAME, MIGRATION_CHECKSUM, now);
+      .run(2, MIGRATIONS[2], migrationChecksum(2), now);
+    createVersionThreeSchema(db);
+    db.prepare('INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)')
+      .run(3, MIGRATIONS[3], migrationChecksum(3), now);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     const after = collectDataFingerprint(db);
-    if (JSON.stringify(before) !== JSON.stringify(after)) {
-      throw new Error('Existing project or image data changed during migration');
-    }
+    assertExpectedProjectData(db, beforeProjects);
+    if (before.imageCount !== after.imageCount || before.imageHash !== after.imageHash) throw new Error('Existing image data changed during migration');
     const foreignKeyErrors = db.prepare('PRAGMA foreign_key_check').all();
     if (foreignKeyErrors.length) {
       throw new Error('Foreign key validation failed after migration');

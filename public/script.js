@@ -6,7 +6,8 @@ import {
     DEFAULT_TEXT_COLOR_TOKEN,
     TEXT_COLOR_OPTIONS,
     buildPresetSceneColorRows,
-    ensureWhiteTextReadableHex
+    isLightSceneHeaderColor,
+    normalizeSceneHeaderColor
 } from './js/color-utils.js';
 import {
     cleanupEditableFieldMarkup,
@@ -1937,6 +1938,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (sourceHeader && sourceHeader.style.backgroundColor) {
             header.style.backgroundColor = sourceHeader.style.backgroundColor;
         }
+        header.classList.toggle(
+            'light-scene-header',
+            Boolean(sourceHeader?.classList.contains('light-scene-header'))
+        );
 
         const headerLeft = document.createElement('div');
         headerLeft.className = 'header-left-actions';
@@ -2852,10 +2857,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (!newColor) {
                 return;
             }
-            const readableColor = ensureWhiteTextReadableHex(newColor);
+            const readableColor = normalizeSceneHeaderColor(newColor);
             colorWrapper.dataset.color = readableColor;
-            colorTrigger.style.backgroundColor = readableColor;
-            header.style.backgroundColor = readableColor;
+            const usesWritingAreaBackground = readableColor === DEFAULT_SCENE_HEADER_COLOR;
+            colorTrigger.style.backgroundColor = usesWritingAreaBackground ? '' : readableColor;
+            header.style.backgroundColor = usesWritingAreaBackground ? '' : readableColor;
+            header.classList.toggle('light-scene-header', isLightSceneHeaderColor(readableColor));
 
             const options = colorPalette.querySelectorAll('.scene-color-option');
             options.forEach((option) => {

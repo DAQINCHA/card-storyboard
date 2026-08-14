@@ -5,7 +5,8 @@
     --text-main: #1e293b;
     --text-muted: #64748b;
     --border-color: #e2e8f0;
-    --orange-header: #64748b;
+    --shot-writing-bg: #ffffff;
+    --orange-header: var(--shot-writing-bg);
     /* Default scene color */
     --primary-color: #3b82f6;
     --primary-hover: #2563eb;
@@ -1177,6 +1178,10 @@ body.is-sorting {
     z-index: 40;
 }
 
+.shot-header.light-scene-header {
+    color: var(--text-main);
+}
+
 .header-left-actions,
 .header-right-actions {
     display: flex;
@@ -1226,6 +1231,20 @@ body.is-sorting {
     border-color: rgba(255, 255, 255, 0.68);
     background: transparent;
     outline: none;
+}
+
+.shot-header.light-scene-header .shot-time-input {
+    border-color: var(--border-color);
+    color: var(--text-main);
+}
+
+.shot-header.light-scene-header .shot-time-input::placeholder {
+    color: var(--text-muted);
+}
+
+.shot-header.light-scene-header .shot-time-input:hover,
+.shot-header.light-scene-header .shot-time-input:focus {
+    border-color: var(--text-main);
 }
 
 .drag-handle {
@@ -1295,6 +1314,14 @@ body.is-sorting {
     display: block;
 }
 
+.shot-header.light-scene-header .vfx-circle {
+    border-color: currentColor;
+}
+
+.shot-header.light-scene-header .vfx-checkbox input:checked+.vfx-circle::after {
+    background: currentColor;
+}
+
 /* Header Color Picker */
 .color-picker-wrapper {
     position: relative;
@@ -1302,13 +1329,21 @@ body.is-sorting {
     height: 17px;
     border-radius: 999px;
     overflow: visible;
-    border: 1px solid rgba(255, 255, 255, 0.5);
+    border: 1px solid currentColor;
     cursor: pointer;
     transition: transform 0.2s, border-color 0.2s;
 }
 
 .color-picker-wrapper:hover {
     transform: scale(1.1);
+    border-color: currentColor;
+}
+
+.shot-header:not(.light-scene-header) .color-picker-wrapper {
+    border-color: rgba(255, 255, 255, 0.5);
+}
+
+.shot-header:not(.light-scene-header) .color-picker-wrapper:hover {
     border-color: white;
 }
 
@@ -1318,8 +1353,8 @@ body.is-sorting {
     border: none;
     border-radius: inherit;
     cursor: pointer;
-    background: #64748b;
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
+    background: var(--shot-writing-bg);
+    box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.28);
 }
 
 .scene-color-palette {
@@ -1380,6 +1415,19 @@ body.is-sorting {
 .delete-shot-btn:hover {
     color: white;
     background: rgba(255, 255, 255, 0.2);
+}
+
+.shot-header.light-scene-header .delete-shot-btn {
+    color: var(--text-muted);
+}
+
+.shot-header.light-scene-header .delete-shot-btn:hover {
+    color: var(--text-main);
+    background: color-mix(in srgb, var(--text-main) 12%, transparent);
+}
+
+.shot-header:not(.light-scene-header) .scene-color-trigger {
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
 }
 
 /* Image Container */
@@ -1557,7 +1605,7 @@ body.is-sorting {
 .shot-details {
     display: flex;
     flex-direction: column;
-    background: white;
+    background: var(--shot-writing-bg);
     flex-grow: 1;
     /* allow spreading in print */
 }
@@ -1746,6 +1794,7 @@ body.is-sorting {
     :root {
         --bg-color: #f6f3eb;
         --card-bg: #fffdf8;
+        --shot-writing-bg: #fffdf8;
         --text-main: #292821;
         --text-muted: #6f6a60;
         --border-color: #b9b2a4;
@@ -1974,7 +2023,7 @@ body.is-sorting {
 
     .shot-camera-move,
     .shot-details {
-        background: #fffdf8;
+        background: var(--shot-writing-bg);
     }
 
     .shot-camera-move {
@@ -2507,10 +2556,11 @@ body.is-sorting {
         color-scheme: dark;
         --bg-color: #171814;
         --card-bg: #24251f;
+        --shot-writing-bg: #24251f;
         --text-main: #f0eadc;
         --text-muted: #aaa397;
         --border-color: #777165;
-        --orange-header: #665f52;
+        --orange-header: var(--shot-writing-bg);
         --primary-color: #ef806d;
         --primary-hover: #ff9582;
         --shadow-sm: 4px 4px 0 rgba(0, 0, 0, 0.72);
@@ -2838,7 +2888,7 @@ body.is-sorting {
 
     .shot-camera-move,
     .shot-details {
-        background: #24251f;
+        background: var(--shot-writing-bg);
     }
 
     .auto-resize-textarea::placeholder,

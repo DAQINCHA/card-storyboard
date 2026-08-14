@@ -138,7 +138,7 @@ test('serves hardened frontend and health endpoint without leaking the database 
     const healthResponse = await fetch(`${baseUrl}/api/health`);
     assert.equal(healthResponse.status, 200);
     const health = await healthResponse.json();
-    assert.deepEqual(health, { ok: true, service: 'card-storyboard', schemaVersion: 2 });
+    assert.deepEqual(health, { ok: true, service: 'card-storyboard', schemaVersion: 3 });
     assert.equal(healthResponse.headers.get('x-frame-options'), 'DENY');
     assert.match(healthResponse.headers.get('content-security-policy'), /default-src 'self'/);
 
@@ -604,7 +604,7 @@ test('automatically migrates v1 share links, trims history and resets project nu
     assert.equal((await fetch(`${baseUrl}/share/${links[0].token}`)).status, 200);
 
     const db = openDatabase(databasePath);
-    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 2);
+    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 3);
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
     db.close();
   }, async (databasePath) => {
@@ -616,6 +616,7 @@ test('automatically migrates v1 share links, trims history and resets project nu
       ALTER TABLE project_share_links DROP COLUMN reusable_token;
       ALTER TABLE project_share_links DROP COLUMN display_number;
       DELETE FROM schema_migrations WHERE version = 2;
+      DELETE FROM schema_migrations WHERE version = 3;
       PRAGMA user_version = 1;
     `);
     const now = Date.now();
@@ -630,6 +631,32 @@ test('automatically migrates v1 share links, trims history and resets project nu
   });
 });
 
+test('migrates legacy gray shot headers to the writing area background', async () => {
+  await withServer(async (baseUrl, databasePath) => {
+    const admin = await login(baseUrl);
+    const project = await (await api(baseUrl, admin, '/api/projects/1')).json();
+    assert.equal(project.shots[0].headerColor, '#fffdf8');
+
+    const db = openDatabase(databasePath);
+    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 3);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 3').get().count, 1);
+    db.close();
+  }, async (databasePath) => {
+    await initialize(databasePath);
+    const db = openDatabase(databasePath);
+    const projectResult = db.prepare("INSERT INTO projects (name, scene, aspect_ratio, shots_json, updated_at, version) VALUES ('Legacy colors', '', '16/9', ?, '2026-01-01 00:00:00', 1)")
+      .run(JSON.stringify([
+        { headerColor: '#64748b', vfx: false, move: 'Static固定' }
+      ]));
+    const adminId = Number(db.prepare("SELECT id FROM users WHERE username = 'admin'").get().id);
+    db.prepare("INSERT INTO project_members (project_id, user_id, role, created_by_user_id, created_at, updated_at) VALUES (?, ?, 'owner', ?, ?, ?)")
+      .run(Number(projectResult.lastInsertRowid), adminId, adminId, Date.now(), Date.now());
+    db.prepare('DELETE FROM schema_migrations WHERE version = 3').run();
+    db.exec('PRAGMA user_version = 2');
+    db.close();
+  });
+});
+
 test('migrates an isolated v0 database without changing project or image bytes', async () => {
   await withServer(async (baseUrl, databasePath) => {
     const admin = await login(baseUrl);
@@ -638,7 +665,7 @@ test('migrates an isolated v0 database without changing project or image bytes',
     assert.equal((await projectsResponse.json()).length, 4);
     assert.ok(readFileSync(databasePath).length > 0);
     const db = openDatabase(databasePath);
-    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 2);
+    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 3);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM project_members WHERE role = 'owner'").get().count, 4);
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
     db.close();
