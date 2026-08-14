@@ -45,6 +45,11 @@ const ACCESS_ROLE_LABELS = Object.freeze({
     admin: '管理员'
 });
 
+const SHOT_SIZE_OPTIONS = Object.freeze(['大特写', '特写', '近景', '中景', '全景', '远景']);
+const CAMERA_MOVEMENT_OPTIONS = Object.freeze([
+    '固定', '推进', '拉远', '摇', '移', '前进跟', '后退跟', '环绕', '长镜头'
+]);
+
 document.addEventListener('DOMContentLoaded', async () => {
     const copyrightYear = document.getElementById('copyright-year');
     if (copyrightYear) {
@@ -951,10 +956,16 @@ document.addEventListener('DOMContentLoaded', async () => {
             return true;
         }
 
-        const textFields = card.querySelectorAll('.text-action, .text-camera, .text-dialogue');
-        return Array.from(textFields).some((field) => {
+        const textFields = card.querySelectorAll('.text-action, .text-dialogue');
+        const hasTextContent = Array.from(textFields).some((field) => {
             return Boolean(getEditablePlainText(field).trim());
         });
+        if (hasTextContent) {
+            return true;
+        }
+
+        const detailSelects = card.querySelectorAll('.shot-size-select, .camera-movement-select');
+        return Array.from(detailSelects).some((select) => Boolean(select.value));
     }
 
     function shouldConfirmShotDeletion(cards) {
@@ -1496,7 +1507,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         const shotTimeInput = card.querySelector('.shot-time-input');
         const checkedMove = card.querySelector('.shot-camera-move input[type="radio"]:checked');
         const actionText = card.querySelector('.text-action');
-        const cameraText = card.querySelector('.text-camera');
+        const shotSizeSelect = card.querySelector('.shot-size-select');
+        const cameraMovementSelect = card.querySelector('.camera-movement-select');
         const dialogueText = card.querySelector('.text-dialogue');
         const preview = card.querySelector('.shot-image-preview');
 
@@ -1506,10 +1518,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             timeRange: typeof shotTimeInput?.value === 'string' ? shotTimeInput.value.trim() : '',
             move: checkedMove?.value || 'Static固定',
             action: getEditablePlainText(actionText),
-            camera: getEditablePlainText(cameraText),
+            shotSize: shotSizeSelect?.value || '',
+            cameraMovement: cameraMovementSelect?.value || '',
+            camera: card.dataset.legacyCamera || '',
             dialogue: getEditablePlainText(dialogueText),
             actionHtml: getEditableFieldHtml(actionText),
-            cameraHtml: getEditableFieldHtml(cameraText),
+            cameraHtml: card.dataset.legacyCameraHtml || '',
             dialogueHtml: getEditableFieldHtml(dialogueText),
             imageId: card.dataset.imageId || '',
             imageSrc: preview?.src || '',
@@ -1928,6 +1942,38 @@ document.addEventListener('DOMContentLoaded', async () => {
         return printText;
     }
 
+    function createPrintShotSelectRow(card) {
+        const row = document.createElement('div');
+        row.className = 'shot-select-row shot-select-row-print';
+        const values = [
+            ['景别', card.querySelector('.shot-size-select')?.value || ''],
+            ['运镜', card.querySelector('.camera-movement-select')?.value || '']
+        ];
+
+        values.forEach(([labelText, value], index) => {
+            const field = document.createElement('div');
+            field.className = 'shot-select-print-field';
+            const label = document.createElement('span');
+            label.className = 'shot-select-print-label';
+            label.textContent = `${labelText}：`;
+            const selectedValue = document.createElement('span');
+            selectedValue.className = 'shot-select-print-value';
+            selectedValue.textContent = value || '—';
+            field.appendChild(label);
+            field.appendChild(selectedValue);
+            row.appendChild(field);
+
+            if (index === 0) {
+                const separator = document.createElement('span');
+                separator.className = 'shot-select-divider';
+                separator.setAttribute('aria-hidden', 'true');
+                row.appendChild(separator);
+            }
+        });
+
+        return row;
+    }
+
     function createPrintCard(card, printIndex) {
         const cardClone = document.createElement('article');
         cardClone.className = 'shot-card';
@@ -2037,19 +2083,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const details = document.createElement('div');
         details.className = 'shot-details';
-        const fields = [
-            card.querySelector('.text-action'),
-            card.querySelector('.text-camera'),
-            card.querySelector('.text-dialogue')
-        ];
-        fields.forEach((sourceField, index) => {
-            details.appendChild(createPrintTextBlockFromField(sourceField));
-            if (index < fields.length - 1) {
-                const divider = document.createElement('div');
-                divider.className = 'divider';
-                details.appendChild(divider);
-            }
-        });
+        details.appendChild(createPrintTextBlockFromField(card.querySelector('.text-action')));
+        const firstDivider = document.createElement('div');
+        firstDivider.className = 'divider';
+        details.appendChild(firstDivider);
+        details.appendChild(createPrintShotSelectRow(card));
+        const secondDivider = document.createElement('div');
+        secondDivider.className = 'divider';
+        details.appendChild(secondDivider);
+        details.appendChild(createPrintTextBlockFromField(card.querySelector('.text-dialogue')));
         cardClone.appendChild(details);
 
         return cardClone;
@@ -2732,6 +2774,22 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
+    function resolveShotSelectValue(savedValue, legacyCameraText, allowedValues) {
+        const normalizedSavedValue = typeof savedValue === 'string' ? savedValue.trim() : '';
+        if (allowedValues.includes(normalizedSavedValue)) {
+            return normalizedSavedValue;
+        }
+
+        const normalizedLegacyText = typeof legacyCameraText === 'string' ? legacyCameraText.trim() : '';
+        if (!normalizedLegacyText) {
+            return '';
+        }
+
+        return [...allowedValues]
+            .sort((left, right) => right.length - left.length)
+            .find((value) => normalizedLegacyText.includes(value)) || '';
+    }
+
     function addShot(animate = true, shotData = null) {
         const perfStartedAt = perfNow();
         const perfMeta = {
@@ -2773,7 +2831,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         const vfxCheckbox = clone.querySelector('.vfx-checkbox input[type="checkbox"]');
         const shotTimeInput = clone.querySelector('.shot-time-input');
         const actionField = clone.querySelector('.text-action');
-        const cameraField = clone.querySelector('.text-camera');
+        const shotSizeSelect = clone.querySelector('.shot-size-select');
+        const cameraMovementSelect = clone.querySelector('.camera-movement-select');
         const dialogueField = clone.querySelector('.text-dialogue');
 
         preview.draggable = false;
@@ -2925,6 +2984,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (shotTimeInput) {
             shotTimeInput.addEventListener('input', scheduleSaveState);
         }
+        if (shotSizeSelect) {
+            shotSizeSelect.addEventListener('change', scheduleSaveState);
+        }
+        if (cameraMovementSelect) {
+            cameraMovementSelect.addEventListener('change', scheduleSaveState);
+        }
         radios.forEach((radio) => radio.addEventListener('change', scheduleSaveState));
 
         if (shotData && typeof shotData === 'object') {
@@ -2948,15 +3013,29 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
             }
 
+            const legacyCamera = typeof shotData.camera === 'string' ? shotData.camera : '';
+            const legacyCameraHtml = typeof shotData.cameraHtml === 'string' ? shotData.cameraHtml : '';
+            card.dataset.legacyCamera = legacyCamera;
+            card.dataset.legacyCameraHtml = legacyCameraHtml;
+            if (shotSizeSelect) {
+                shotSizeSelect.value = resolveShotSelectValue(
+                    shotData.shotSize,
+                    legacyCamera,
+                    SHOT_SIZE_OPTIONS
+                );
+            }
+            if (cameraMovementSelect) {
+                cameraMovementSelect.value = resolveShotSelectValue(
+                    shotData.cameraMovement,
+                    legacyCamera,
+                    CAMERA_MOVEMENT_OPTIONS
+                );
+            }
+
             setEditableFieldContent(
                 actionField,
                 typeof shotData.actionHtml === 'string' ? shotData.actionHtml : '',
                 typeof shotData.action === 'string' ? shotData.action : ''
-            );
-            setEditableFieldContent(
-                cameraField,
-                typeof shotData.cameraHtml === 'string' ? shotData.cameraHtml : '',
-                typeof shotData.camera === 'string' ? shotData.camera : ''
             );
             setEditableFieldContent(
                 dialogueField,
@@ -2984,8 +3063,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (shotTimeInput) {
                 shotTimeInput.value = '';
             }
+            delete card.dataset.legacyCamera;
+            delete card.dataset.legacyCameraHtml;
+            if (shotSizeSelect) {
+                shotSizeSelect.value = '';
+            }
+            if (cameraMovementSelect) {
+                cameraMovementSelect.value = '';
+            }
             setEditableFieldContent(actionField, '', '');
-            setEditableFieldContent(cameraField, '', '');
             setEditableFieldContent(dialogueField, '', '');
         }
 

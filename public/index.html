@@ -286,8 +286,34 @@
                 <div class="auto-resize-textarea rich-text-input text-action" contenteditable="true" role="textbox"
                     aria-multiline="true" data-placeholder="输入镜头动作描述..."></div>
                 <div class="divider"></div>
-                <div class="auto-resize-textarea rich-text-input text-camera" contenteditable="true" role="textbox"
-                    aria-multiline="true" data-placeholder="输入运镜/景别..."></div>
+                <div class="shot-select-row" role="group" aria-label="景别和运镜">
+                    <label class="shot-select-field">
+                        <select class="shot-detail-select shot-size-select" aria-label="景别" required>
+                            <option value="" selected disabled hidden>景别</option>
+                            <option value="大特写">大特写</option>
+                            <option value="特写">特写</option>
+                            <option value="近景">近景</option>
+                            <option value="中景">中景</option>
+                            <option value="全景">全景</option>
+                            <option value="远景">远景</option>
+                        </select>
+                    </label>
+                    <span class="shot-select-divider" aria-hidden="true"></span>
+                    <label class="shot-select-field">
+                        <select class="shot-detail-select camera-movement-select" aria-label="运镜" required>
+                            <option value="" selected disabled hidden>运镜</option>
+                            <option value="固定">固定</option>
+                            <option value="推进">推进</option>
+                            <option value="拉远">拉远</option>
+                            <option value="摇">摇</option>
+                            <option value="移">移</option>
+                            <option value="前进跟">前进跟</option>
+                            <option value="后退跟">后退跟</option>
+                            <option value="环绕">环绕</option>
+                            <option value="长镜头">长镜头</option>
+                        </select>
+                    </label>
+                </div>
                 <div class="divider"></div>
                 <div class="auto-resize-textarea rich-text-input text-dialogue" contenteditable="true" role="textbox"
                     aria-multiline="true" data-placeholder="输入台词..."></div>
