@@ -1857,7 +1857,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function toChineseMoveLabel(rawValue = '') {
         const map = {
-            'Static固定': '固定',
+            'Static固定': '三角架',
             'Dolly轨道': '轨道',
             'Gimbal稳定器': '稳定器',
             'HH手持': '手持'
