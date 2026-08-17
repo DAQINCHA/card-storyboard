@@ -92,6 +92,7 @@
             <!-- Header -->
             <header class="project-header">
                 <span id="project-access-badge" class="access-badge hidden" aria-label="项目权限"></span>
+                <span id="project-total-duration" class="project-total-duration" aria-live="polite">总时长 0s</span>
                 <div class="header-group flex-1">
                     <span class="header-label">PROJECT 项目</span>
                     <input type="text" class="header-input" placeholder="输入项目名">
@@ -222,7 +223,8 @@
                 </div>
 
                 <div class="header-center-actions">
-                    <input type="text" class="shot-time-input" placeholder="Time" aria-label="计划拍摄时间段">
+                    <input type="text" class="shot-time-input" inputmode="numeric" pattern="[0-9]*" placeholder="时长" aria-label="镜头时长（秒）">
+                    <span class="shot-time-unit" aria-hidden="true">s</span>
                 </div>
 
                 <div class="header-right-actions">
@@ -316,7 +318,7 @@
                 </div>
                 <div class="divider"></div>
                 <div class="auto-resize-textarea rich-text-input text-dialogue" contenteditable="true" role="textbox"
-                    aria-multiline="true" data-placeholder="输入台词..."></div>
+                    aria-multiline="true" data-placeholder="备注"></div>
             </div>
         </article>
     </template>

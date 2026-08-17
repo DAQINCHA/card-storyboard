@@ -11,6 +11,9 @@
     --primary-color: #3b82f6;
     --primary-hover: #2563eb;
     --danger-color: #ef4444;
+    --home-action-green: #16a34a;
+    --home-action-green-hover: #15803d;
+    --shot-card-shadow-color: #e9b84c;
     --radius-lg: 12px;
     --radius-md: 8px;
     --radius-sm: 4px;
@@ -742,8 +745,8 @@ html.preload-view-editor #editor-view.hidden {
     width: var(--header-btn-height);
     padding: 0;
     justify-content: center;
-    background: #16a34a;
-    border-color: #16a34a;
+    background: var(--home-action-green);
+    border-color: var(--home-action-green);
     color: #ffffff;
 }
 
@@ -753,8 +756,8 @@ html.preload-view-editor #editor-view.hidden {
 }
 
 .home-icon-btn:hover {
-    background: #15803d;
-    border-color: #15803d;
+    background: var(--home-action-green-hover);
+    border-color: var(--home-action-green-hover);
     color: #ffffff;
 }
 
@@ -816,6 +819,22 @@ html.preload-view-editor #editor-view.hidden {
 
 .multi-select-action-btn:hover {
     background: #f1f5f9;
+}
+
+.multi-select-float-panel .multi-select-action-btn.group {
+    color: var(--shot-card-shadow-color);
+    font-weight: 800;
+}
+
+.multi-select-float-panel .multi-select-action-btn.group:hover {
+    background: color-mix(in srgb, var(--shot-card-shadow-color) 16%, transparent);
+    color: var(--shot-card-shadow-color);
+}
+
+.multi-select-float-panel .multi-select-action-btn.group.is-disabled,
+.multi-select-float-panel .multi-select-action-btn.group.is-disabled:hover {
+    background: transparent;
+    color: #94a3b8;
 }
 
 .multi-select-action-btn.danger {
@@ -891,6 +910,7 @@ html.preload-view-editor #editor-view.hidden {
     grid-template-columns: repeat(var(--grid-columns), minmax(min(100%, var(--shot-card-width)), var(--shot-card-width)));
     justify-content: center;
     gap: 1.25rem;
+    position: relative;
 }
 
 .scene-divider-trigger {
@@ -1071,6 +1091,49 @@ html.preload-view-editor #editor-view.hidden {
     box-shadow: var(--shadow-md);
 }
 
+.shot-card.shot-grouped {
+    outline: none;
+}
+
+.shot-card.shot-grouped:not(.multi-selected):not(.sortable-drag):not(.sortable-chosen):hover {
+    transform: translate(-1px, -1px);
+    box-shadow: none;
+}
+
+.shot-card.shot-grouped:not(.multi-selected):not(.sortable-drag):not(.sortable-chosen) {
+    box-shadow: none;
+}
+
+.shot-group-frame-layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 0;
+    overflow: visible;
+    color: var(--shot-card-shadow-color);
+    pointer-events: none;
+}
+
+.shot-group-shadow-path {
+    fill: currentColor;
+    stroke: none;
+    transform: translate(5px, 5px);
+    transform-origin: 0 0;
+    transition: transform 0.3s ease;
+}
+
+.shot-group-shadow-path.is-hovered {
+    transform: translate(7px, 7px);
+}
+
+.storyboard-grid > .shot-card {
+    z-index: 1;
+}
+
+.storyboard-grid.is-sorting > .shot-group-frame-layer {
+    display: none;
+}
+
 .storyboard-grid.is-multi-select .shot-card:hover {
     box-shadow: 0 0 0 1px rgba(100, 116, 139, 0.35), var(--shadow-md);
 }
@@ -1159,6 +1222,10 @@ body.is-sorting {
     display: none;
 }
 
+.print-shot-group-connector {
+    display: none;
+}
+
 /* Card Header */
 .shot-header {
     background: var(--orange-header);
@@ -1199,12 +1266,18 @@ body.is-sorting {
     transform: translate(-50%, -50%);
     width: clamp(72px, 38%, 112px);
     max-width: calc(100% - 206px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.18rem;
     pointer-events: none;
     z-index: 1;
 }
 
 .shot-time-input {
+    flex: 1 1 auto;
     width: 100%;
+    min-width: 0;
     height: 14px;
     -webkit-appearance: none;
     appearance: none;
@@ -1222,6 +1295,15 @@ body.is-sorting {
     pointer-events: auto;
 }
 
+.shot-time-unit {
+    flex: 0 0 auto;
+    color: rgba(255, 255, 255, 0.78);
+    font-size: 0.53rem;
+    font-weight: 700;
+    line-height: 1;
+    text-transform: lowercase;
+}
+
 .shot-time-input::placeholder {
     color: rgba(255, 255, 255, 0.68);
 }
@@ -1236,6 +1318,10 @@ body.is-sorting {
 .shot-header.light-scene-header .shot-time-input {
     border-color: var(--border-color);
     color: var(--text-main);
+}
+
+.shot-header.light-scene-header .shot-time-unit {
+    color: var(--text-muted);
 }
 
 .shot-header.light-scene-header .shot-time-input::placeholder {
@@ -1879,6 +1965,9 @@ body.is-sorting {
         --primary-color: #dc624e;
         --primary-hover: #bd4a3a;
         --danger-color: #cf4438;
+        --home-action-green: #8ab6a9;
+        --home-action-green-hover: #74a394;
+        --shot-card-shadow-color: #e9b84c;
         --radius-lg: 8px;
         --radius-md: 5px;
         --radius-sm: 3px;
@@ -2033,13 +2122,13 @@ body.is-sorting {
     }
 
     .home-icon-btn {
-        background: #8ab6a9;
+        background: var(--home-action-green);
         border-color: #292821;
         color: #292821;
     }
 
     .home-icon-btn:hover {
-        background: #74a394;
+        background: var(--home-action-green-hover);
         border-color: #292821;
         color: #292821;
     }
@@ -2071,18 +2160,18 @@ body.is-sorting {
         border: 1.5px solid #292821;
         border-radius: 4px;
         background: #fffdf8;
-        box-shadow: 5px 5px 0 #e9b84c;
+        box-shadow: 5px 5px 0 var(--shot-card-shadow-color);
     }
 
     .shot-card:hover {
-        box-shadow: 7px 7px 0 #e9b84c;
+        box-shadow: 7px 7px 0 var(--shot-card-shadow-color);
         transform: translate(-1px, -1px);
     }
 
     .shot-card.multi-selected,
     .storyboard-grid.is-multi-select .shot-card:hover {
         border-color: #292821;
-        box-shadow: 0 0 0 3px rgba(239, 118, 95, 0.55), 6px 6px 0 #e9b84c;
+        box-shadow: 0 0 0 3px rgba(239, 118, 95, 0.55), 6px 6px 0 var(--shot-card-shadow-color);
     }
 
     .shot-card.multi-selected::after {
@@ -2307,6 +2396,19 @@ body.is-sorting {
     font-weight: 800;
     line-height: 1.1;
     letter-spacing: 0.08em;
+    white-space: nowrap;
+}
+
+.project-total-duration {
+    position: absolute;
+    bottom: 0.45rem;
+    left: 2rem;
+    z-index: 2;
+    color: var(--text-muted);
+    font-size: 0.65rem;
+    font-weight: 700;
+    line-height: 1.1;
+    letter-spacing: 0.04em;
     white-space: nowrap;
 }
 
@@ -2642,6 +2744,9 @@ body.is-sorting {
         --orange-header: var(--shot-writing-bg);
         --primary-color: #ef806d;
         --primary-hover: #ff9582;
+        --home-action-green: #3f6f65;
+        --home-action-green-hover: #4d8175;
+        --shot-card-shadow-color: #8f7130;
         --shadow-sm: 4px 4px 0 rgba(0, 0, 0, 0.72);
         --shadow-md: 6px 6px 0 #8f7130;
         --shadow-lg: 8px 8px 0 rgba(0, 0, 0, 0.78);
@@ -2807,13 +2912,13 @@ body.is-sorting {
     }
 
     .secondary-btn.home-icon-btn {
-        background: #3f6f65;
+        background: var(--home-action-green);
         border-color: #d5cfc2;
         color: #f0eadc;
     }
 
     .secondary-btn.home-icon-btn:hover {
-        background: #4d8175;
+        background: var(--home-action-green-hover);
         border-color: #f0eadc;
         color: #fffaf0;
     }
@@ -2932,15 +3037,15 @@ body.is-sorting {
     .shot-card {
         background-color: #24251f;
         border-color: #d5cfc2;
-        box-shadow: 5px 5px 0 #8f7130;
+        box-shadow: 5px 5px 0 var(--shot-card-shadow-color);
     }
 
     .shot-card:hover {
-        box-shadow: 7px 7px 0 #8f7130;
+        box-shadow: 7px 7px 0 var(--shot-card-shadow-color);
     }
 
     .shot-card.multi-selected {
-        box-shadow: 0 0 0 3px rgba(239, 128, 109, 0.55), 6px 6px 0 #8f7130;
+        box-shadow: 0 0 0 3px rgba(239, 128, 109, 0.55), 6px 6px 0 var(--shot-card-shadow-color);
     }
 
     .shot-card.multi-selected::after {
@@ -3000,6 +3105,10 @@ body.is-sorting {
 /* ========================================================= */
 
 @media print {
+    :root {
+        --home-action-green: #8ab6a9;
+    }
+
     @page {
         size: 16in 9in;
         margin: 8mm 10mm 14mm 10mm;
@@ -3071,9 +3180,11 @@ body.is-sorting {
     }
 
     .print-page .project-header {
-        position: static;
+        position: relative;
+        top: auto;
         box-shadow: none;
         border: none;
+        border-radius: 0;
         padding: 0 0 0.75rem 0;
         margin-top: 0;
         margin-bottom: 0.75rem;
@@ -3084,6 +3195,12 @@ body.is-sorting {
     .print-page .project-header::before {
         content: none !important;
         display: none !important;
+    }
+
+    .print-page .project-total-duration {
+        bottom: 0.1rem;
+        left: 0;
+        font-size: 0.46rem;
     }
 
     .header-input {
@@ -3113,8 +3230,9 @@ body.is-sorting {
     /* Force a 5-column layout so each print page contains 2 rows of 5 cards */
     .print-grid {
         display: grid;
-        grid-template-columns: repeat(5, 1fr);
-        gap: 6px;
+        grid-template-columns: repeat(4, minmax(0, 1fr) 6px) minmax(0, 1fr);
+        column-gap: 0;
+        row-gap: 6px;
         width: 100%;
     }
 
@@ -3125,6 +3243,25 @@ body.is-sorting {
         /* remove large radius for print */
         break-inside: avoid;
         page-break-inside: avoid;
+    }
+
+    .print-grid > .shot-group-frame-layer {
+        display: none !important;
+    }
+
+    .print-shot-group-connector {
+        display: block;
+        align-self: stretch;
+        justify-self: stretch;
+        min-width: 0;
+        background: repeating-linear-gradient(135deg,
+                #8f8f8f 0,
+                #8f8f8f 2px,
+                #d6d6d6 2px,
+                #d6d6d6 4px);
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+        pointer-events: none;
     }
 
     /* Ensure solid colors are printed */
@@ -3208,7 +3345,9 @@ body.is-sorting {
     }
 
     .print-pages[data-print-aspect="4/3"] .print-grid {
-        gap: 4px;
+        grid-template-columns: repeat(4, minmax(0, 1fr) 4px) minmax(0, 1fr);
+        column-gap: 0;
+        row-gap: 4px;
     }
 
     .print-pages[data-print-aspect="4/3"] .shot-header {
@@ -3261,8 +3400,9 @@ body.is-sorting {
     }
 
     .print-pages[data-print-aspect="9/16"] .print-grid {
-        grid-template-columns: repeat(5, minmax(0, 1fr));
-        gap: 3px;
+        grid-template-columns: repeat(4, minmax(0, 1fr) 3px) minmax(0, 1fr);
+        column-gap: 0;
+        row-gap: 3px;
     }
 
     .print-pages[data-print-aspect="9/16"] .shot-card {
