@@ -151,6 +151,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     let editLeaseToken = '';
     let editLockHeartbeatTimer = null;
     let editLockHeartbeatPromise = null;
+    let projectPresenceHeartbeatTimer = null;
+    let projectPresenceHeartbeatPromise = null;
+    let adminPresenceRefreshPromise = null;
     let editorReadOnly = true;
     let saveConflictActive = false;
     let shotCount = 0;
@@ -169,6 +172,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     const PRELOAD_EDITOR_CLASS = 'preload-view-editor';
     const DEFAULT_NEW_PROJECT_SHOT_COUNT = 5;
     const EDIT_LOCK_HEARTBEAT_MS = 3000;
+    const PROJECT_PRESENCE_ID = typeof globalThis.crypto?.randomUUID === 'function'
+        ? globalThis.crypto.randomUUID()
+        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-presence`;
+    const ADMIN_PROJECT_GROUPS_KEY = 'storyboard:admin-project-groups-collapsed';
     const PINNED_PROJECTS_KEY = `storyboard:pinned-project-ids:${appUser?.id || 'anonymous'}`;
     const PRESET_SCENE_COLOR_ROWS = buildPresetSceneColorRows();
     let pinnedProjectIds = loadPinnedProjectIds();
@@ -188,6 +195,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     let activeTextColorField = null;
     let lastTextColorPointer = null;
     let clipboardToastHideTimer = null;
+
+    function loadCollapsedAdminGroups() {
+        try {
+            const value = JSON.parse(localStorage.getItem(ADMIN_PROJECT_GROUPS_KEY) || '{}');
+            return value && typeof value === 'object' ? value : {};
+        } catch {
+            return {};
+        }
+    }
+
+    function saveCollapsedAdminGroups(groups) {
+        try { localStorage.setItem(ADMIN_PROJECT_GROUPS_KEY, JSON.stringify(groups)); } catch {}
+    }
 
     function renderSaveStatus() {
         if (!saveStatusElement) return;
@@ -407,6 +427,50 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
         } catch {
             // The lease will expire automatically.
+        }
+    }
+
+    function stopProjectPresenceHeartbeat() {
+        if (projectPresenceHeartbeatTimer) clearInterval(projectPresenceHeartbeatTimer);
+        projectPresenceHeartbeatTimer = null;
+        projectPresenceHeartbeatPromise = null;
+    }
+
+    async function heartbeatProjectPresence() {
+        if (projectPresenceHeartbeatPromise || !currentProjectId || isShareMode) return false;
+        const projectId = currentProjectId;
+        projectPresenceHeartbeatPromise = apiRequest(`/api/projects/${projectId}/presence`, {
+            method: 'PATCH', headers: { 'X-Project-Presence': PROJECT_PRESENCE_ID }
+        })
+            .then(() => true)
+            .catch(() => false)
+            .finally(() => { projectPresenceHeartbeatPromise = null; });
+        return projectPresenceHeartbeatPromise;
+    }
+
+    async function releaseProjectPresence() {
+        stopProjectPresenceHeartbeat();
+        const projectId = currentProjectId;
+        if (!projectId || isShareMode) return;
+        try {
+            await apiRequest(`/api/projects/${projectId}/presence`, {
+                method: 'DELETE', headers: { 'X-Project-Presence': PROJECT_PRESENCE_ID }, keepalive: true
+            });
+        } catch {
+            // The presence will expire automatically.
+        }
+    }
+
+    async function startProjectPresence() {
+        if (!currentProjectId || isShareMode) return;
+        stopProjectPresenceHeartbeat();
+        try {
+            await apiRequest(`/api/projects/${currentProjectId}/presence`, {
+                method: 'POST', headers: { 'X-Project-Presence': PROJECT_PRESENCE_ID }
+            });
+            projectPresenceHeartbeatTimer = setInterval(() => { heartbeatProjectPresence(); }, 10000);
+        } catch (error) {
+            console.warn('Project presence unavailable:', error);
         }
     }
 
@@ -3417,12 +3481,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         groups.forEach(({ owner, projects }) => {
             const section = document.createElement('section');
             section.className = 'account-project-group';
+            const groupKey = String(owner.id ?? owner.username);
+            const collapsedGroups = loadCollapsedAdminGroups();
+            const isCollapsed = Boolean(collapsedGroups[groupKey]);
 
             const divider = document.createElement('header');
             divider.className = 'account-project-divider';
             divider.innerHTML = `
+                <button type="button" class="scene-divider-toggle-btn account-project-collapse-btn" aria-label="折叠项目" aria-expanded="true">▾</button>
                 <span class="account-project-divider-line" aria-hidden="true"></span>
                 <div class="account-project-divider-label">
+                    <span class="account-project-online-dot" aria-hidden="true"></span>
                     <strong class="account-project-owner"></strong>
                     <span class="account-project-meta"></span>
                 </div>
@@ -3430,16 +3499,55 @@ document.addEventListener('DOMContentLoaded', async () => {
             `;
             divider.querySelector('.account-project-owner').textContent = owner.displayName || owner.username;
             divider.querySelector('.account-project-meta').textContent = `@${owner.username} · ${projects.length} 个项目`;
+            const onlineDot = divider.querySelector('.account-project-online-dot');
+            onlineDot.dataset.userId = String(owner.id);
+            onlineDot.title = '当前未打开项目';
 
             const grid = document.createElement('div');
             grid.className = 'account-project-grid';
             if (Number(owner.id) === Number(appUser.id)) grid.appendChild(createProjectCard());
             projects.forEach((project) => grid.appendChild(createProjectElement(project)));
 
+            const collapseButton = divider.querySelector('.account-project-collapse-btn');
+            const setCollapsed = (nextCollapsed) => {
+                section.classList.toggle('is-collapsed', nextCollapsed);
+                collapseButton.setAttribute('aria-expanded', String(!nextCollapsed));
+                collapseButton.setAttribute('aria-label', nextCollapsed ? '展开项目' : '折叠项目');
+                collapseButton.textContent = nextCollapsed ? '▸' : '▾';
+                const nextGroups = loadCollapsedAdminGroups();
+                if (nextCollapsed) nextGroups[groupKey] = true;
+                else delete nextGroups[groupKey];
+                saveCollapsedAdminGroups(nextGroups);
+            };
+            collapseButton.addEventListener('click', () => setCollapsed(!section.classList.contains('is-collapsed')));
+            setCollapsed(isCollapsed);
+
             section.appendChild(divider);
             section.appendChild(grid);
             projectsGrid.appendChild(section);
         });
+    }
+
+    async function refreshAdminPresence() {
+        if (!appUser?.isAdmin || adminPresenceRefreshPromise) return adminPresenceRefreshPromise;
+        adminPresenceRefreshPromise = (async () => {
+            try {
+                const payload = await apiRequest('/api/admin/project-presence');
+                const activeUserIds = new Set((payload?.userIds || []).map(String));
+                projectsGrid.querySelectorAll('.account-project-online-dot[data-user-id]').forEach((dot) => {
+                    const isOnline = activeUserIds.has(dot.dataset.userId);
+                    dot.classList.toggle('is-online', isOnline);
+                    dot.title = isOnline ? '已打开项目' : '当前未打开项目';
+                });
+            } catch (error) {
+                console.warn('Refresh project presence failed:', error);
+            }
+        })();
+        try {
+            return await adminPresenceRefreshPromise;
+        } finally {
+            adminPresenceRefreshPromise = null;
+        }
     }
 
     async function refreshProjects() {
@@ -3461,6 +3569,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 perfMeta.projectCount = Array.isArray(projects) ? projects.length : 0;
                 projectsCache = sortProjectsByPinned(projects);
                 renderProjects();
+                await refreshAdminPresence();
             } catch (error) {
                 console.error('Load project list failed:', error);
                 projectsGrid.innerHTML = '<p style="color:#ef4444;font-size:1rem;">项目列表加载失败，请检查服务端是否已正常启动。</p>';
@@ -3546,11 +3655,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             return false;
         }
         await releaseCurrentLock();
+        await releaseProjectPresence();
         const project = await apiRequest(`/api/projects/${normalizedProjectId}`);
         editLeaseToken = '';
         saveConflictActive = false;
         applyProjectToEditor(project);
         switchToEditor({ syncHistory, replaceHistory });
+        await startProjectPresence();
         if (project.capabilities?.canEdit) {
             await acquireCurrentProjectLock(false);
         } else {
@@ -4118,6 +4229,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             return false;
         }
         await releaseCurrentLock();
+        await releaseProjectPresence();
         switchToHome({ syncHistory, replaceHistory });
         await refreshProjects();
         return true;
@@ -4188,6 +4300,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const heartbeatAfterPageResume = () => {
         if (!document.hidden) {
             heartbeatCurrentProjectLock();
+            heartbeatProjectPresence();
         }
     };
     document.addEventListener('visibilitychange', heartbeatAfterPageResume);
@@ -4216,8 +4329,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
         releaseCurrentLock();
+        releaseProjectPresence();
     });
-    window.addEventListener('storyboard-before-logout', () => { releaseCurrentLock(); });
+    window.addEventListener('storyboard-before-logout', () => { releaseCurrentLock(); releaseProjectPresence(); });
 
     async function applyRoute(route, options = {}) {
         const { syncHistory = true, replaceHistory = false, flushSave = true } = options;
@@ -4279,6 +4393,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     syncProjectHeaderWidth();
+    if (appUser?.isAdmin) {
+        window.setInterval(() => {
+            if (!homeView.classList.contains('hidden') && document.visibilityState === 'visible') {
+                refreshAdminPresence();
+            }
+        }, 5000);
+    }
     const initialViewPromise = isShareMode
         ? Promise.resolve().then(() => {
             editLeaseToken = '';

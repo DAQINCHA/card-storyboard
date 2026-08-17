@@ -3,11 +3,13 @@ const { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync,
 const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 5;
 const MIGRATIONS = Object.freeze({
   1: 'accounts-sharing-and-edit-locks',
   2: 'project-scoped-reusable-share-links',
-  3: 'writing-area-default-scene-header-colors'
+  3: 'writing-area-default-scene-header-colors',
+  4: 'project-presence-heartbeats',
+  5: 'project-presence-per-browser-tab'
 });
 const MIGRATION_NAME = MIGRATIONS[SCHEMA_VERSION];
 const MIGRATION_CHECKSUM = crypto.createHash('sha256').update(MIGRATION_NAME).digest('hex');
@@ -250,6 +252,43 @@ function createVersionThreeSchema(db) {
   });
 }
 
+function createVersionFourSchema(db) {
+  db.exec(`
+    CREATE TABLE project_presence (
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      session_id INTEGER NOT NULL REFERENCES user_sessions(id) ON DELETE CASCADE,
+      heartbeat_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,
+      PRIMARY KEY (project_id, session_id)
+    );
+    CREATE INDEX project_presence_user_idx ON project_presence(user_id, project_id);
+    CREATE INDEX project_presence_expiry_idx ON project_presence(expires_at);
+  `);
+}
+
+function createVersionFiveSchema(db) {
+  db.exec(`
+    DROP INDEX project_presence_user_idx;
+    DROP INDEX project_presence_expiry_idx;
+    ALTER TABLE project_presence RENAME TO project_presence_v4;
+    CREATE TABLE project_presence (
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      session_id INTEGER NOT NULL REFERENCES user_sessions(id) ON DELETE CASCADE,
+      presence_id TEXT NOT NULL,
+      heartbeat_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,
+      PRIMARY KEY (project_id, session_id, presence_id)
+    );
+    INSERT INTO project_presence (project_id, user_id, session_id, presence_id, heartbeat_at, expires_at)
+      SELECT project_id, user_id, session_id, 'legacy-session', heartbeat_at, expires_at FROM project_presence_v4;
+    DROP TABLE project_presence_v4;
+    CREATE INDEX project_presence_user_idx ON project_presence(user_id, project_id);
+    CREATE INDEX project_presence_expiry_idx ON project_presence(expires_at);
+  `);
+}
+
 function collectProjectRows(db) {
   return db.prepare('SELECT id, name, scene, aspect_ratio, shots_json, updated_at FROM projects ORDER BY id').all();
 }
@@ -295,7 +334,7 @@ function migrateDatabase(databasePath) {
     }
     return { migrated: false, backup: null };
   }
-  if (![1, 2].includes(version)) {
+  if (![1, 2, 3, 4].includes(version)) {
     db.close();
     const direction = version < 1 ? 'setup-admin or migration is required' : 'database is newer than this application';
     throw new Error(`Unsupported database schema version ${version}; ${direction}`);
@@ -324,6 +363,8 @@ function migrateDatabase(databasePath) {
     for (let nextVersion = version + 1; nextVersion <= SCHEMA_VERSION; nextVersion += 1) {
       if (nextVersion === 2) createVersionTwoSchema(db);
       if (nextVersion === 3) createVersionThreeSchema(db);
+      if (nextVersion === 4) createVersionFourSchema(db);
+      if (nextVersion === 5) createVersionFiveSchema(db);
       db.prepare('INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)')
         .run(nextVersion, MIGRATIONS[nextVersion], migrationChecksum(nextVersion), Date.now());
       db.exec(`PRAGMA user_version = ${nextVersion}`);
@@ -387,6 +428,12 @@ function setupDatabase({ databasePath, username, displayName, passwordHash, must
     createVersionThreeSchema(db);
     db.prepare('INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)')
       .run(3, MIGRATIONS[3], migrationChecksum(3), now);
+    createVersionFourSchema(db);
+    db.prepare('INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)')
+      .run(4, MIGRATIONS[4], migrationChecksum(4), now);
+    createVersionFiveSchema(db);
+    db.prepare('INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)')
+      .run(5, MIGRATIONS[5], migrationChecksum(5), now);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     const after = collectDataFingerprint(db);
     assertExpectedProjectData(db, beforeProjects);

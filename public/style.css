@@ -293,6 +293,28 @@ html.preload-view-editor #editor-view.hidden {
     white-space: nowrap;
 }
 
+.account-project-collapse-btn {
+    flex: 0 0 auto;
+}
+
+.account-project-online-dot {
+    width: 0.42rem;
+    height: 0.42rem;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    background: #cbd5e1;
+    box-shadow: 0 0 0 1px rgba(100, 116, 139, 0.12);
+}
+
+.account-project-online-dot.is-online {
+    background: #62a875;
+    box-shadow: 0 0 0 1px rgba(98, 168, 117, 0.18), 0 0 0 3px rgba(98, 168, 117, 0.1);
+}
+
+.account-project-group.is-collapsed .account-project-grid {
+    display: none;
+}
+
 .account-project-owner {
     overflow: hidden;
     font-size: 0.78rem;

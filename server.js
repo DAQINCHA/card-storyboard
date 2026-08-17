@@ -37,6 +37,7 @@ const SESSION_COOKIE = 'storyboard_session';
 const SHARE_COOKIE = 'storyboard_share';
 const MAX_REQUEST_BYTES = 20 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const PROJECT_PRESENCE_MS = 30000;
 const SESSION_IDLE_MS = 12 * 60 * 60 * 1000;
 const SESSION_ABSOLUTE_MS = 7 * 24 * 60 * 60 * 1000;
 const EDIT_LOCK_MS = 60 * 1000;
@@ -81,6 +82,11 @@ function normalizeProjectId(value) {
 function normalizeImageId(value) {
   const id = String(value || '').trim();
   return IMAGE_ID_PATTERN.test(id) ? id : null;
+}
+
+function normalizePresenceId(value) {
+  const id = String(value || '').trim();
+  return /^[a-zA-Z0-9_-]{16,80}$/.test(id) ? id : null;
 }
 
 function buildImageUrl(projectId, imageId) {
@@ -416,6 +422,34 @@ function createStoryboardStore(databasePath) {
       return null;
     }
     return row;
+  }
+
+  function touchProjectPresence(projectId, user, session, presenceId) {
+    requireProjectAccess(projectId, user, 'view');
+    const normalizedPresenceId = normalizePresenceId(presenceId);
+    if (!normalizedPresenceId) throw new HttpError(400, 'Project presence id is invalid', 'invalid_presence_id');
+    const now = Date.now();
+    db.prepare('DELETE FROM project_presence WHERE expires_at <= ?').run(now);
+    db.prepare(`INSERT INTO project_presence (project_id, user_id, session_id, presence_id, heartbeat_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT (project_id, session_id, presence_id) DO UPDATE SET user_id = excluded.user_id, heartbeat_at = excluded.heartbeat_at, expires_at = excluded.expires_at`)
+      .run(projectId, user.id, session.id, normalizedPresenceId, now, now + PROJECT_PRESENCE_MS);
+    return { expiresAt: now + PROJECT_PRESENCE_MS };
+  }
+
+  function releaseProjectPresence(projectId, session, presenceId) {
+    const normalizedPresenceId = normalizePresenceId(presenceId);
+    if (!normalizedPresenceId) throw new HttpError(400, 'Project presence id is invalid', 'invalid_presence_id');
+    db.prepare('DELETE FROM project_presence WHERE project_id = ? AND session_id = ? AND presence_id = ?')
+      .run(projectId, session.id, normalizedPresenceId);
+  }
+
+  function listActivePresenceUserIds() {
+    const now = Date.now();
+    db.prepare('DELETE FROM project_presence WHERE expires_at <= ?').run(now);
+    return db.prepare('SELECT DISTINCT user_id FROM project_presence WHERE expires_at > ? ORDER BY user_id')
+      .all(now)
+      .map((row) => Number(row.user_id));
   }
 
   function publicLock(row, sessionId = null) {
@@ -756,6 +790,7 @@ function createStoryboardStore(databasePath) {
       return toProjectDetail(row, user, { lock: publicLock(currentLock(projectId), sessionId) });
     },
     acquireLock, heartbeatLock, releaseLock, saveProject, deleteProject,
+    touchProjectPresence, releaseProjectPresence, listActivePresenceUserIds,
     listMembers, addOrUpdateMember, removeMember, transferOwnership,
     listShareLinks, createShareLink, revokeShareLink, getShare, getSharedProject,
     listUsers, createUser, registerUser, updateUser, deleteUser, resetUserPassword, changePassword,
@@ -962,6 +997,11 @@ function createStoryboardApplication({
         return sendEmpty(response, 204, { 'Set-Cookie': serializeCookie(SESSION_COOKIE, '', { secure: secureCookies, maxAge: 0 }) });
       }
 
+      if (url.pathname === '/api/admin/project-presence' && request.method === 'GET') {
+        const auth = authenticate(request); requireAdmin(auth);
+        return sendJson(response, 200, { userIds: store.listActivePresenceUserIds() });
+      }
+
       if (url.pathname === '/api/admin/users') {
         const auth = authenticate(request); requireAdmin(auth);
         if (request.method === 'GET') return sendJson(response, 200, store.listUsers());
@@ -1011,6 +1051,15 @@ function createStoryboardApplication({
         if (request.method === 'POST') { requireCsrf(request, auth); const payload = await readJson(request); return sendJson(response, 200, store.acquireLock(projectId, auth.user, auth.session, Boolean(payload.force))); }
         if (request.method === 'PATCH') { requireCsrf(request, auth); return sendJson(response, 200, store.heartbeatLock(projectId, auth.user, auth.session, String(request.headers['x-edit-lease'] || ''))); }
         if (request.method === 'DELETE') { requireCsrf(request, auth); store.releaseLock(projectId, auth.session, String(request.headers['x-edit-lease'] || '')); return sendEmpty(response, 204); }
+      }
+
+      const presenceMatch = /^\/api\/projects\/(\d+)\/presence$/.exec(url.pathname);
+      if (presenceMatch) {
+        const auth = authenticate(request); const projectId = Number(presenceMatch[1]);
+        requireCsrf(request, auth);
+        const presenceId = String(request.headers['x-project-presence'] || '');
+        if (request.method === 'POST' || request.method === 'PATCH') return sendJson(response, 200, store.touchProjectPresence(projectId, auth.user, auth.session, presenceId));
+        if (request.method === 'DELETE') { store.releaseProjectPresence(projectId, auth.session, presenceId); return sendEmpty(response, 204); }
       }
 
       const membersMatch = /^\/api\/projects\/(\d+)\/members$/.exec(url.pathname);

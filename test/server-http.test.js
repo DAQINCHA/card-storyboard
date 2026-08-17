@@ -138,7 +138,7 @@ test('serves hardened frontend and health endpoint without leaking the database 
     const healthResponse = await fetch(`${baseUrl}/api/health`);
     assert.equal(healthResponse.status, 200);
     const health = await healthResponse.json();
-    assert.deepEqual(health, { ok: true, service: 'card-storyboard', schemaVersion: 3 });
+    assert.deepEqual(health, { ok: true, service: 'card-storyboard', schemaVersion: 5 });
     assert.equal(healthResponse.headers.get('x-frame-options'), 'DENY');
     assert.match(healthResponse.headers.get('content-security-policy'), /default-src 'self'/);
 
@@ -508,6 +508,22 @@ test('enforces owner editor viewer permissions and revocable anonymous sharing',
     assert.deepEqual(ownerSearch.map((item) => item.id), [editorOwned.id]);
 
     assert.equal((await api(baseUrl, viewer, `/api/projects/${project.id}`)).status, 200);
+    assert.equal((await api(baseUrl, viewer, '/api/admin/project-presence')).status, 404);
+    assert.equal((await api(baseUrl, viewer, `/api/projects/${project.id}/presence`, {
+      method: 'POST', headers: { 'X-Project-Presence': 'viewer-browser-tab-one' }
+    })).status, 200);
+    assert.deepEqual((await (await api(baseUrl, admin, '/api/admin/project-presence')).json()).userIds, [viewerId]);
+    assert.equal((await api(baseUrl, viewer, `/api/projects/${project.id}/presence`, {
+      method: 'POST', headers: { 'X-Project-Presence': 'viewer-browser-tab-two' }
+    })).status, 200);
+    assert.equal((await api(baseUrl, viewer, `/api/projects/${project.id}/presence`, {
+      method: 'DELETE', headers: { 'X-Project-Presence': 'viewer-browser-tab-one' }
+    })).status, 204);
+    assert.deepEqual((await (await api(baseUrl, admin, '/api/admin/project-presence')).json()).userIds, [viewerId]);
+    assert.equal((await api(baseUrl, viewer, `/api/projects/${project.id}/presence`, {
+      method: 'DELETE', headers: { 'X-Project-Presence': 'viewer-browser-tab-two' }
+    })).status, 204);
+    assert.deepEqual((await (await api(baseUrl, admin, '/api/admin/project-presence')).json()).userIds, []);
     assert.equal((await api(baseUrl, viewer, `/api/projects/${project.id}/lock`, { method: 'POST', body: {} })).status, 404);
     assert.equal((await api(baseUrl, viewer, `/api/projects/${project.id}`, { method: 'DELETE' })).status, 404);
 
@@ -599,6 +615,43 @@ test('keeps five reusable share links with numbering scoped to each project', as
   });
 });
 
+test('migrates v4 project presence to per-browser-tab records', async () => {
+  await withServer(async (baseUrl, databasePath) => {
+    const admin = await login(baseUrl);
+    const project = await (await api(baseUrl, admin, '/api/projects', {
+      method: 'POST', body: { name: 'Presence migration project' }
+    })).json();
+    assert.equal((await api(baseUrl, admin, `/api/projects/${project.id}/presence`, {
+      method: 'POST', headers: { 'X-Project-Presence': 'admin-browser-tab-one' }
+    })).status, 200);
+    assert.deepEqual((await (await api(baseUrl, admin, '/api/admin/project-presence')).json()).userIds, [admin.user.id]);
+
+    const db = openDatabase(databasePath);
+    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 5);
+    assert.ok(db.prepare('PRAGMA table_info(project_presence)').all().some((column) => column.name === 'presence_id'));
+    db.close();
+  }, async (databasePath) => {
+    await initialize(databasePath);
+    const db = openDatabase(databasePath);
+    db.exec(`
+      DROP TABLE project_presence;
+      CREATE TABLE project_presence (
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        session_id INTEGER NOT NULL REFERENCES user_sessions(id) ON DELETE CASCADE,
+        heartbeat_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        PRIMARY KEY (project_id, session_id)
+      );
+      CREATE INDEX project_presence_user_idx ON project_presence(user_id, project_id);
+      CREATE INDEX project_presence_expiry_idx ON project_presence(expires_at);
+      DELETE FROM schema_migrations WHERE version = 5;
+      PRAGMA user_version = 4;
+    `);
+    db.close();
+  });
+});
+
 test('automatically migrates v1 share links, trims history and resets project numbering', async () => {
   const legacyTokens = Array.from({ length: 7 }, (_, index) => `legacy-share-token-${index + 1}-still-valid`);
   await withServer(async (baseUrl, databasePath) => {
@@ -614,7 +667,7 @@ test('automatically migrates v1 share links, trims history and resets project nu
     assert.equal((await fetch(`${baseUrl}/share/${links[0].token}`)).status, 200);
 
     const db = openDatabase(databasePath);
-    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 3);
+    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 5);
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
     db.close();
   }, async (databasePath) => {
@@ -627,6 +680,9 @@ test('automatically migrates v1 share links, trims history and resets project nu
       ALTER TABLE project_share_links DROP COLUMN display_number;
       DELETE FROM schema_migrations WHERE version = 2;
       DELETE FROM schema_migrations WHERE version = 3;
+      DELETE FROM schema_migrations WHERE version = 4;
+      DELETE FROM schema_migrations WHERE version = 5;
+      DROP TABLE project_presence;
       PRAGMA user_version = 1;
     `);
     const now = Date.now();
@@ -648,7 +704,7 @@ test('migrates legacy gray shot headers to the writing area background', async (
     assert.equal(project.shots[0].headerColor, '#fffdf8');
 
     const db = openDatabase(databasePath);
-    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 3);
+    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 5);
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 3').get().count, 1);
     db.close();
   }, async (databasePath) => {
@@ -662,6 +718,9 @@ test('migrates legacy gray shot headers to the writing area background', async (
     db.prepare("INSERT INTO project_members (project_id, user_id, role, created_by_user_id, created_at, updated_at) VALUES (?, ?, 'owner', ?, ?, ?)")
       .run(Number(projectResult.lastInsertRowid), adminId, adminId, Date.now(), Date.now());
     db.prepare('DELETE FROM schema_migrations WHERE version = 3').run();
+    db.prepare('DELETE FROM schema_migrations WHERE version = 4').run();
+    db.prepare('DELETE FROM schema_migrations WHERE version = 5').run();
+    db.exec('DROP TABLE project_presence');
     db.exec('PRAGMA user_version = 2');
     db.close();
   });
@@ -675,7 +734,7 @@ test('migrates an isolated v0 database without changing project or image bytes',
     assert.equal((await projectsResponse.json()).length, 4);
     assert.ok(readFileSync(databasePath).length > 0);
     const db = openDatabase(databasePath);
-    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 3);
+    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 5);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM project_members WHERE role = 'owner'").get().count, 4);
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
     db.close();
