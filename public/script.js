@@ -107,11 +107,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     const multiSelectGroupBtn = document.createElement('button');
     multiSelectGroupBtn.type = 'button';
     multiSelectGroupBtn.className = 'multi-select-action-btn group';
-    multiSelectGroupBtn.textContent = '打组';
+    multiSelectGroupBtn.textContent = '编组';
     const multiSelectUngroupBtn = document.createElement('button');
     multiSelectUngroupBtn.type = 'button';
     multiSelectUngroupBtn.className = 'multi-select-action-btn';
-    multiSelectUngroupBtn.textContent = '取消打组';
+    multiSelectUngroupBtn.textContent = '取消编组';
+    const multiSelectGroupDivider = document.createElement('div');
+    multiSelectGroupDivider.className = 'multi-select-divider';
     const multiSelectDeleteBtn = document.createElement('button');
     multiSelectDeleteBtn.type = 'button';
     multiSelectDeleteBtn.className = 'multi-select-action-btn danger';
@@ -125,6 +127,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     multiSelectMoveList.className = 'multi-select-move-list';
     multiSelectPanel.appendChild(multiSelectGroupBtn);
     multiSelectPanel.appendChild(multiSelectUngroupBtn);
+    multiSelectPanel.appendChild(multiSelectGroupDivider);
     multiSelectPanel.appendChild(multiSelectDeleteBtn);
     multiSelectPanel.appendChild(multiSelectDivider);
     multiSelectPanel.appendChild(multiSelectMoveTitle);
