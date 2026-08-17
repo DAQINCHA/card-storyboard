@@ -1550,13 +1550,44 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function sanitizeShotDurationInput(value) {
-        return String(value || '').replace(/[^0-9]/g, '');
+        const digitsAndDots = String(value || '').replace(/[^0-9.]/g, '');
+        const firstDotIndex = digitsAndDots.indexOf('.');
+        if (firstDotIndex === -1) {
+            return digitsAndDots;
+        }
+        return `${digitsAndDots.slice(0, firstDotIndex + 1)}${digitsAndDots.slice(firstDotIndex + 1).replace(/\./g, '')}`;
     }
 
     function normalizeSavedShotDuration(value) {
         const normalized = typeof value === 'string' ? value.trim() : '';
-        const match = normalized.match(/^(\d+)\s*s?$/i);
+        const match = normalized.match(/^((?:\d+(?:\.\d*)?)|(?:\.\d+))\s*s?$/i);
         return match ? match[1] : '';
+    }
+
+    function parseShotDuration(value) {
+        const normalized = typeof value === 'string' ? value.trim() : '';
+        if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(normalized)) {
+            return null;
+        }
+        const seconds = Number(normalized);
+        return Number.isFinite(seconds) && seconds >= 0 ? seconds : null;
+    }
+
+    function formatShotDurationNumber(value, fractionDigits = 10) {
+        if (!Number.isFinite(value) || value <= 0) {
+            return '0';
+        }
+        return Number(value.toFixed(fractionDigits)).toString();
+    }
+
+    function stepShotDurationValue(value, step) {
+        const normalized = sanitizeShotDurationInput(value);
+        const currentSeconds = parseShotDuration(normalized) ?? 0;
+        const fractionDigits = Math.min(
+            10,
+            Math.max(1, normalized.includes('.') ? normalized.split('.')[1].length : 0)
+        );
+        return formatShotDurationNumber(Math.max(0, currentSeconds + step), fractionDigits);
     }
 
     function updateTotalDuration() {
@@ -1565,11 +1596,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         const totalSeconds = Array.from(storyboardGrid.querySelectorAll('.shot-time-input'))
             .reduce((total, input) => {
-                const seconds = Number.parseInt(input.value, 10);
-                return total + (Number.isSafeInteger(seconds) && seconds >= 0 ? seconds : 0);
+                const seconds = parseShotDuration(input.value);
+                return total + (seconds ?? 0);
             }, 0);
-        projectTotalDuration.textContent = `总时长 ${totalSeconds}s`;
-        projectTotalDuration.setAttribute('aria-label', `全片总时长 ${totalSeconds} 秒`);
+        const formattedTotal = formatShotDurationNumber(totalSeconds);
+        projectTotalDuration.textContent = `总时长 ${formattedTotal}s`;
+        projectTotalDuration.setAttribute('aria-label', `全片总时长 ${formattedTotal} 秒`);
     }
 
     function shouldConfirmShotDeletion(cards) {
@@ -2787,22 +2819,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         const sourceTimeInput = card.querySelector('.shot-time-input');
         const timeRange = (sourceTimeInput?.value || '').trim();
         let headerCenter = null;
-        if (timeRange) {
+        if (/\d/.test(timeRange)) {
             headerCenter = document.createElement('div');
             headerCenter.className = 'header-center-actions';
-            const printTimeInput = document.createElement('input');
-            printTimeInput.type = 'text';
-            printTimeInput.className = 'shot-time-input';
-            printTimeInput.value = timeRange;
-            printTimeInput.placeholder = '';
-            printTimeInput.readOnly = true;
-            printTimeInput.tabIndex = -1;
-            headerCenter.appendChild(printTimeInput);
-            const printTimeUnit = document.createElement('span');
-            printTimeUnit.className = 'shot-time-unit';
-            printTimeUnit.textContent = 's';
-            printTimeUnit.setAttribute('aria-hidden', 'true');
-            headerCenter.appendChild(printTimeUnit);
+            const printTimeValue = document.createElement('span');
+            printTimeValue.className = 'shot-time-print-value';
+            printTimeValue.textContent = `${timeRange}s`;
+            printTimeValue.setAttribute('aria-label', `镜头时长 ${timeRange} 秒`);
+            headerCenter.appendChild(printTimeValue);
         }
 
         const headerRight = document.createElement('div');
@@ -3632,6 +3656,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const vfxCheckbox = clone.querySelector('.vfx-checkbox input[type="checkbox"]');
         const shotTimeInput = clone.querySelector('.shot-time-input');
+        const shotTimeInputSizer = clone.querySelector('.shot-time-input-sizer');
+        const shotTimeDecrement = clone.querySelector('.shot-time-decrement');
+        const shotTimeIncrement = clone.querySelector('.shot-time-increment');
         const actionField = clone.querySelector('.text-action');
         const shotSizeSelect = clone.querySelector('.shot-size-select');
         const cameraMovementSelect = clone.querySelector('.camera-movement-select');
@@ -3792,6 +3819,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (vfxCheckbox) {
             vfxCheckbox.addEventListener('change', scheduleSaveState);
         }
+        const syncShotTimeInputSizer = () => {
+            if (!shotTimeInput || !shotTimeInputSizer) {
+                return;
+            }
+            shotTimeInputSizer.dataset.value = shotTimeInput.value || shotTimeInput.placeholder || ' ';
+        };
         if (shotTimeInput) {
             shotTimeInput.addEventListener('input', () => {
                 delete card.dataset.legacyTimeRange;
@@ -3801,9 +3834,23 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (shotTimeInput.value !== sanitizedValue) {
                     shotTimeInput.value = sanitizedValue;
                 }
+                syncShotTimeInputSizer();
                 updateTotalDuration();
                 scheduleSaveState();
             });
+        }
+        const stepShotDuration = (step) => {
+            if (!shotTimeInput) {
+                return;
+            }
+            shotTimeInput.value = stepShotDurationValue(shotTimeInput.value, step);
+            shotTimeInput.dispatchEvent(new Event('input', { bubbles: true }));
+        };
+        if (shotTimeDecrement) {
+            shotTimeDecrement.addEventListener('click', () => stepShotDuration(-0.1));
+        }
+        if (shotTimeIncrement) {
+            shotTimeIncrement.addEventListener('click', () => stepShotDuration(0.1));
         }
         if (shotSizeSelect) {
             shotSizeSelect.addEventListener('change', scheduleSaveState);
@@ -3911,6 +3958,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             setEditableFieldContent(actionField, '', '');
             setEditableFieldContent(dialogueField, '', '');
         }
+
+        syncShotTimeInputSizer();
 
         appendStoryboardItem(clone);
 

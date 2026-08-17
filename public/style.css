@@ -1304,29 +1304,78 @@ body.is-sorting {
     z-index: 1;
 }
 
-.shot-time-input {
+.shot-time-control {
+    display: flex;
     flex: 1 1 auto;
+    align-items: stretch;
     width: 100%;
     min-width: 0;
-    height: 14px;
-    -webkit-appearance: none;
-    appearance: none;
+    height: 20px;
+    overflow: hidden;
     border: 1px solid rgba(255, 255, 255, 0.4);
     border-radius: 999px;
+    transition: border-color 0.2s ease;
+    pointer-events: auto;
+}
+
+.shot-time-input {
+    grid-area: 1 / 1;
+    width: 100%;
+    min-width: 0;
+    height: 100%;
+    -webkit-appearance: none;
+    appearance: none;
+    border: 0;
+    border-radius: 0;
     background: transparent;
     color: #fff;
     font-family: inherit;
     font-size: 0.53rem;
     font-weight: 600;
+    font-variant-numeric: tabular-nums;
     line-height: 1;
     text-align: center;
-    padding: 0 0.3rem;
-    transition: border-color 0.2s ease;
+    padding: 0;
     pointer-events: auto;
+}
+
+.shot-time-value {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    justify-content: center;
+    gap: 0.08rem;
+    min-width: 0;
+    height: 100%;
+}
+
+.shot-time-input-sizer {
+    display: inline-grid;
+    flex: 0 1 auto;
+    align-items: center;
+    width: max-content;
+    min-width: 0;
+    max-width: calc(100% - 0.65rem);
+    height: 100%;
+    overflow: hidden;
+}
+
+.shot-time-input-sizer::after {
+    content: attr(data-value);
+    grid-area: 1 / 1;
+    visibility: hidden;
+    padding: 0;
+    font-family: inherit;
+    font-size: 0.53rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    white-space: pre;
 }
 
 .shot-time-unit {
     flex: 0 0 auto;
+    align-self: center;
     color: rgba(255, 255, 255, 0.78);
     font-size: 0.53rem;
     font-weight: 700;
@@ -1334,19 +1383,70 @@ body.is-sorting {
     text-transform: lowercase;
 }
 
+.shot-time-step {
+    display: grid;
+    flex: 0 0 17px;
+    place-items: center;
+    width: 17px;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: rgba(255, 255, 255, 0.1);
+    color: inherit;
+    font-family: inherit;
+    font-size: 0.67rem;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.shot-time-decrement {
+    border-right: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.shot-time-increment {
+    border-left: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.shot-time-step:hover,
+.shot-time-step:focus-visible {
+    background: rgba(255, 255, 255, 0.22);
+    outline: none;
+}
+
+.shot-time-step:disabled {
+    cursor: default;
+    opacity: 0.55;
+}
+
+.shot-time-print-value {
+    color: inherit;
+    font-size: 0.53rem;
+    font-weight: 700;
+    line-height: 1;
+    white-space: nowrap;
+}
+
 .shot-time-input::placeholder {
     color: rgba(255, 255, 255, 0.68);
 }
 
-.shot-time-input:hover,
-.shot-time-input:focus {
+.shot-time-control:hover,
+.shot-time-control:focus-within {
     border-color: rgba(255, 255, 255, 0.68);
     background: transparent;
+}
+
+.shot-time-input:focus {
     outline: none;
 }
 
-.shot-header.light-scene-header .shot-time-input {
+.shot-header.light-scene-header .shot-time-control {
     border-color: var(--border-color);
+}
+
+.shot-header.light-scene-header .shot-time-input {
     color: var(--text-main);
 }
 
@@ -1354,12 +1454,23 @@ body.is-sorting {
     color: var(--text-muted);
 }
 
+.shot-header.light-scene-header .shot-time-step {
+    border-color: color-mix(in srgb, var(--text-main) 18%, transparent);
+    background: color-mix(in srgb, var(--text-main) 7%, transparent);
+    color: var(--text-main);
+}
+
+.shot-header.light-scene-header .shot-time-step:hover,
+.shot-header.light-scene-header .shot-time-step:focus-visible {
+    background: color-mix(in srgb, var(--text-main) 14%, transparent);
+}
+
 .shot-header.light-scene-header .shot-time-input::placeholder {
     color: var(--text-muted);
 }
 
-.shot-header.light-scene-header .shot-time-input:hover,
-.shot-header.light-scene-header .shot-time-input:focus {
+.shot-header.light-scene-header .shot-time-control:hover,
+.shot-header.light-scene-header .shot-time-control:focus-within {
     border-color: var(--text-main);
 }
 
@@ -2215,7 +2326,7 @@ body.is-sorting {
         border-bottom-color: #292821;
     }
 
-    .shot-time-input {
+    .shot-time-control {
         border-radius: var(--radius-sm);
     }
 
@@ -3249,8 +3360,8 @@ body.is-sorting {
         max-width: calc(100% - 122px);
     }
 
-    .print-pages .shot-time-input {
-        border-radius: 3px;
+    .print-pages .shot-time-print-value {
+        font-size: 0.53rem;
     }
 
     .print-page-content {

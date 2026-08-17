@@ -223,8 +223,16 @@
                 </div>
 
                 <div class="header-center-actions">
-                    <input type="text" class="shot-time-input" inputmode="numeric" pattern="[0-9]*" placeholder="时长" aria-label="镜头时长（秒）">
-                    <span class="shot-time-unit" aria-hidden="true">s</span>
+                    <div class="shot-time-control">
+                        <button type="button" class="shot-time-step shot-time-decrement" aria-label="时长减少 0.1 秒">−</button>
+                        <div class="shot-time-value">
+                            <span class="shot-time-input-sizer" data-value="时长">
+                                <input type="text" class="shot-time-input" size="1" inputmode="decimal" pattern="[0-9]*[.]?[0-9]*" placeholder="时长" aria-label="镜头时长（秒）">
+                            </span>
+                            <span class="shot-time-unit" aria-hidden="true">s</span>
+                        </div>
+                        <button type="button" class="shot-time-step shot-time-increment" aria-label="时长增加 0.1 秒">+</button>
+                    </div>
                 </div>
 
                 <div class="header-right-actions">
