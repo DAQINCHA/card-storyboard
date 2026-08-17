@@ -150,6 +150,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let currentCapabilities = {};
     let editLeaseToken = '';
     let editLockHeartbeatTimer = null;
+    let editLockHeartbeatPromise = null;
     let editorReadOnly = true;
     let saveConflictActive = false;
     let shotCount = 0;
@@ -336,17 +337,29 @@ document.addEventListener('DOMContentLoaded', async () => {
     function stopLockHeartbeat() {
         if (editLockHeartbeatTimer) clearInterval(editLockHeartbeatTimer);
         editLockHeartbeatTimer = null;
+        editLockHeartbeatPromise = null;
     }
 
-    function startLockHeartbeat() {
-        stopLockHeartbeat();
-        if (!editLeaseToken || !currentProjectId) return;
-        editLockHeartbeatTimer = setInterval(async () => {
+    async function heartbeatCurrentProjectLock() {
+        if (editLockHeartbeatPromise) {
+            return editLockHeartbeatPromise;
+        }
+        if (!editLeaseToken || !currentProjectId || isShareMode) {
+            return false;
+        }
+
+        const projectId = currentProjectId;
+        const lease = editLeaseToken;
+        const heartbeatPromise = (async () => {
             try {
-                await apiRequest(`/api/projects/${currentProjectId}/lock`, {
-                    method: 'PATCH', headers: { 'X-Edit-Lease': editLeaseToken }
+                await apiRequest(`/api/projects/${projectId}/lock`, {
+                    method: 'PATCH', headers: { 'X-Edit-Lease': lease }
                 });
+                return currentProjectId === projectId && editLeaseToken === lease;
             } catch (error) {
+                if (currentProjectId !== projectId || editLeaseToken !== lease) {
+                    return false;
+                }
                 if (error.status === 423 || error.status === 404) {
                     const takeoverHolder = showTakeoverNotice(error);
                     editLeaseToken = '';
@@ -360,7 +373,25 @@ document.addEventListener('DOMContentLoaded', async () => {
                     );
                     applyEditorAccess();
                 }
+                return false;
             }
+        })();
+
+        editLockHeartbeatPromise = heartbeatPromise;
+        try {
+            return await heartbeatPromise;
+        } finally {
+            if (editLockHeartbeatPromise === heartbeatPromise) {
+                editLockHeartbeatPromise = null;
+            }
+        }
+    }
+
+    function startLockHeartbeat() {
+        stopLockHeartbeat();
+        if (!editLeaseToken || !currentProjectId) return;
+        editLockHeartbeatTimer = setInterval(() => {
+            heartbeatCurrentProjectLock();
         }, EDIT_LOCK_HEARTBEAT_MS);
     }
 
@@ -2206,6 +2237,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (isRestoringState || !currentProjectId || editorReadOnly || !editLeaseToken || saveConflictActive) {
             return;
         }
+        // A visibility/focus heartbeat may be recovering a lease after browser
+        // timer throttling. Do not let a save race it and invalidate the lease.
+        if (editLockHeartbeatPromise) {
+            await editLockHeartbeatPromise;
+            if (isRestoringState || !currentProjectId || editorReadOnly || !editLeaseToken || saveConflictActive) {
+                return;
+            }
+        }
         if (pendingSavePromise) {
             return pendingSavePromise;
         }
@@ -2420,14 +2459,31 @@ document.addEventListener('DOMContentLoaded', async () => {
         return Boolean(selection && !selection.isCollapsed && selection.toString());
     }
 
+    function getActiveHoveredImageUploadContext() {
+        if (!hoveredImageUploadContext
+            || !hoveredImageUploadContext.card?.isConnected
+            || !hoveredImageUploadContext.container?.isConnected
+            || !storyboardGrid.contains(hoveredImageUploadContext.card)) {
+            hoveredImageUploadContext = null;
+            return null;
+        }
+        return hoveredImageUploadContext;
+    }
+
+    function clipboardHasImage(clipboardData) {
+        return Array.from(clipboardData?.items || [])
+            .some((item) => typeof item.type === 'string' && item.type.startsWith('image/'));
+    }
+
     function getHoveredImageSrc() {
-        if (!hoveredImageUploadContext || !hoveredImageUploadContext.preview) {
+        const imageContext = getActiveHoveredImageUploadContext();
+        if (!imageContext?.preview) {
             return '';
         }
-        if (hoveredImageUploadContext.preview.style.display === 'none') {
+        if (imageContext.preview.style.display === 'none') {
             return '';
         }
-        return hoveredImageUploadContext.preview.src || '';
+        return imageContext.preview.src || '';
     }
 
     function showClipboardToast(message = '') {
@@ -3417,6 +3473,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             aspectRatioSelect.value = hasOption ? targetAspect : '16/9';
             document.documentElement.style.setProperty('--shot-aspect', aspectRatioSelect.value);
 
+            hoveredImageUploadContext = null;
             storyboardGrid.innerHTML = '';
             sceneDividerTriggerEl = null;
             shotCount = 0;
@@ -3617,6 +3674,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         const textFields = clone.querySelectorAll('.auto-resize-textarea');
         textFields.forEach((field) => {
             field.addEventListener('paste', (event) => {
+                // Chrome keeps a contenteditable field focused after the pointer moves away.
+                // Let image pastes bubble to the hovered card's image handler instead of
+                // consuming them as empty plain text here.
+                if (!isMultiSelectMode
+                    && !editorReadOnly
+                    && getActiveHoveredImageUploadContext()
+                    && clipboardHasImage(event.clipboardData)) {
+                    return;
+                }
                 const plainText = event.clipboardData?.getData('text/plain') || '';
                 event.preventDefault();
                 event.stopPropagation();
@@ -3871,7 +3937,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (isMultiSelectMode || editorReadOnly) {
             return;
         }
-        if (!hoveredImageUploadContext) {
+        const imageContext = getActiveHoveredImageUploadContext();
+        if (!imageContext) {
             return;
         }
 
@@ -3891,7 +3958,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         e.preventDefault();
-        applyImageToCard(file, hoveredImageUploadContext);
+        applyImageToCard(file, imageContext);
     });
 
     updateMultiSelectToggleButton();
@@ -3928,7 +3995,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         toggleShotCardSelection(card, event.clientX, event.clientY);
     }, true);
     document.addEventListener('keydown', (event) => {
-        if (isCopyShortcut(event) && hoveredImageUploadContext) {
+        if (isCopyShortcut(event) && getActiveHoveredImageUploadContext()) {
             if (hasActiveEditableSelection()) {
                 return;
             }
@@ -4069,6 +4136,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         refreshMultiSelectPanel();
         hideTextColorPalette();
     });
+    const heartbeatAfterPageResume = () => {
+        if (!document.hidden) {
+            heartbeatCurrentProjectLock();
+        }
+    };
+    document.addEventListener('visibilitychange', heartbeatAfterPageResume);
+    window.addEventListener('pageshow', heartbeatAfterPageResume);
+    window.addEventListener('focus', heartbeatAfterPageResume);
     window.addEventListener('scroll', () => {
         scheduleSyncSceneHeaderInputByViewport();
     }, { passive: true });

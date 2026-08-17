@@ -404,8 +404,12 @@ function createStoryboardStore(databasePath) {
     return normalized;
   }
 
+  function getLockRow(projectId) {
+    return db.prepare(`SELECT l.*, u.username, u.display_name FROM project_edit_locks l JOIN users u ON u.id = l.user_id WHERE l.project_id = ?`).get(projectId) || null;
+  }
+
   function currentLock(projectId) {
-    const row = db.prepare(`SELECT l.*, u.username, u.display_name FROM project_edit_locks l JOIN users u ON u.id = l.user_id WHERE l.project_id = ?`).get(projectId);
+    const row = getLockRow(projectId);
     if (!row) return null;
     if (row.expires_at <= Date.now()) {
       db.prepare('DELETE FROM project_edit_locks WHERE project_id = ?').run(projectId);
@@ -439,12 +443,15 @@ function createStoryboardStore(databasePath) {
     return { leaseToken: rawLease, expiresAt: now + EDIT_LOCK_MS, version: project.version };
   }
 
-  function validateLease(projectId, session, rawLease) {
-    const lock = currentLock(projectId);
+  function leaseMatches(lock, session, rawLease) {
     if (!lock || lock.session_id !== session.id || !rawLease) return null;
     const supplied = tokenHash(rawLease);
     const expected = Buffer.from(lock.lease_token_hash);
     return supplied.length === expected.length && crypto.timingSafeEqual(supplied, expected) ? lock : null;
+  }
+
+  function validateLease(projectId, session, rawLease) {
+    return leaseMatches(currentLock(projectId), session, rawLease);
   }
 
   function editLockLostError(projectId, session) {
@@ -459,7 +466,11 @@ function createStoryboardStore(databasePath) {
 
   function heartbeatLock(projectId, user, session, rawLease) {
     requireProjectAccess(projectId, user, 'edit');
-    if (!validateLease(projectId, session, rawLease)) throw editLockLostError(projectId, session);
+    // A hidden Chrome tab or a sleeping Mac can delay timers beyond the lease TTL.
+    // Renew the same, otherwise untouched lease even when its timestamp has just
+    // elapsed. If another editor has acquired the lock, the stored token differs
+    // and the old tab still loses the lock normally.
+    if (!leaseMatches(getLockRow(projectId), session, rawLease)) throw editLockLostError(projectId, session);
     const now = Date.now();
     db.prepare('UPDATE project_edit_locks SET heartbeat_at = ?, expires_at = ? WHERE project_id = ?').run(now, now + EDIT_LOCK_MS, projectId);
     return { expiresAt: now + EDIT_LOCK_MS };

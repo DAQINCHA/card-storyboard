@@ -156,7 +156,7 @@ test('serves hardened frontend and health endpoint without leaking the database 
 });
 
 test('authenticates with HttpOnly session and enforces CSRF, edit locks and project versions', async () => {
-  await withServer(async (baseUrl) => {
+  await withServer(async (baseUrl, databasePath) => {
     const invalid = await fetch(`${baseUrl}/api/auth/login`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', Origin: TEST_ORIGIN },
       body: JSON.stringify({ username: 'admin', password: 'wrong password value' })
@@ -185,6 +185,16 @@ test('authenticates with HttpOnly session and enforces CSRF, edit locks and proj
     const lockResponse = await api(baseUrl, admin, `/api/projects/${created.id}/lock`, { method: 'POST', body: {} });
     assert.equal(lockResponse.status, 200);
     const lock = await lockResponse.json();
+
+    const expiryDb = openDatabase(databasePath);
+    expiryDb.prepare('UPDATE project_edit_locks SET expires_at = ? WHERE project_id = ?')
+      .run(Date.now() - 1, created.id);
+    expiryDb.close();
+    const resumedHeartbeat = await api(baseUrl, admin, `/api/projects/${created.id}/lock`, {
+      method: 'PATCH', headers: { 'X-Edit-Lease': lock.leaseToken }
+    });
+    assert.equal(resumedHeartbeat.status, 200, await resumedHeartbeat.clone().text());
+    assert.ok((await resumedHeartbeat.json()).expiresAt > Date.now());
 
     const imageData = Buffer.from('small-image').toString('base64');
     const saveResponse = await api(baseUrl, admin, `/api/projects/${created.id}`, {
