@@ -175,6 +175,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     let pendingShotGroupFrameRaf = null;
     let storyboardSortable = null;
     let isMultiSelectMode = false;
+    let hoveredShotGroupId = '';
+    let printShotGroupPatternSequence = 0;
     let selectedShotCards = new Set();
     let lastMultiSelectPointer = null;
     let previousDocumentTitleBeforePrint = null;
@@ -985,7 +987,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
         delete card.dataset.shotGroupId;
-        card.classList.remove('shot-grouped');
+        card.classList.remove('shot-grouped', 'is-group-hovered');
     }
 
     function buildShotGroupUnionPath(rectangles) {
@@ -1179,6 +1181,34 @@ document.addEventListener('DOMContentLoaded', async () => {
         }));
     }
 
+    function buildShotGroupGapRectangles(cards) {
+        const visibleCards = cards
+            .filter((card) => card && card.offsetParent !== null)
+            .map((card) => ({
+                left: card.offsetLeft,
+                top: card.offsetTop,
+                right: card.offsetLeft + card.offsetWidth,
+                bottom: card.offsetTop + card.offsetHeight
+            }))
+            .sort((left, right) => left.top - right.top || left.left - right.left);
+        const rowTolerance = 3;
+        const gaps = [];
+        for (let index = 1; index < visibleCards.length; index += 1) {
+            const previous = visibleCards[index - 1];
+            const current = visibleCards[index];
+            if (Math.abs(previous.top - current.top) > rowTolerance || current.left <= previous.right) {
+                continue;
+            }
+            gaps.push({
+                left: Math.round(previous.right),
+                top: Math.round(Math.min(previous.top, current.top)),
+                right: Math.round(current.left),
+                bottom: Math.round(Math.max(previous.bottom, current.bottom))
+            });
+        }
+        return gaps;
+    }
+
     function renderShotGroupFrames(grid) {
         if (!grid) {
             return;
@@ -1208,18 +1238,70 @@ document.addEventListener('DOMContentLoaded', async () => {
         layer.setAttribute('height', String(height));
         layer.setAttribute('viewBox', `0 0 ${width} ${height}`);
         layer.setAttribute('aria-hidden', 'true');
+
+        const hatchPatternId = 'shot-group-hatch-pattern';
+        const definitions = document.createElementNS(svgNamespace, 'defs');
+        const hatchPattern = document.createElementNS(svgNamespace, 'pattern');
+        hatchPattern.setAttribute('id', hatchPatternId);
+        hatchPattern.setAttribute('width', '4');
+        hatchPattern.setAttribute('height', '4');
+        hatchPattern.setAttribute('patternUnits', 'userSpaceOnUse');
+        hatchPattern.setAttribute('patternTransform', 'rotate(45)');
+        const hatchStripe = document.createElementNS(svgNamespace, 'rect');
+        hatchStripe.classList.add('shot-group-hatch-stripe');
+        hatchStripe.setAttribute('x', '0');
+        hatchStripe.setAttribute('y', '0');
+        hatchStripe.setAttribute('width', '1.5');
+        hatchStripe.setAttribute('height', '4');
+        hatchPattern.appendChild(hatchStripe);
+        definitions.appendChild(hatchPattern);
+        layer.appendChild(definitions);
+
         cardsByGroup.forEach((cards, groupId) => {
             const rectangles = buildShotGroupFrameRectangles(cards, 0);
             const pathData = buildShotGroupUnionPath(rectangles);
             if (!pathData) {
                 return;
             }
+            const isHovered = !grid.classList.contains('is-multi-select')
+                && !grid.classList.contains('is-sorting')
+                && (hoveredShotGroupId === groupId || cards.some((card) => card.matches(':hover')));
+            cards.forEach((card) => card.classList.toggle('is-group-hovered', isHovered));
+
             const offsetShadow = document.createElementNS(svgNamespace, 'path');
             offsetShadow.classList.add('shot-group-shadow-path', 'shot-group-shadow-offset');
             offsetShadow.setAttribute('d', pathData);
             offsetShadow.dataset.shotGroupId = groupId;
-            offsetShadow.classList.toggle('is-hovered', cards.some((card) => card.matches(':hover')));
+            offsetShadow.classList.toggle('is-hovered', isHovered);
             layer.appendChild(offsetShadow);
+
+            buildShotGroupGapRectangles(cards).forEach((gap) => {
+                const connector = document.createElementNS(svgNamespace, 'g');
+                connector.classList.add('shot-group-connector');
+                connector.classList.toggle('is-hovered', isHovered);
+                connector.dataset.shotGroupId = groupId;
+
+                const hatch = document.createElementNS(svgNamespace, 'rect');
+                hatch.classList.add('shot-group-hatch-connector');
+                hatch.setAttribute('x', String(gap.left));
+                hatch.setAttribute('y', String(gap.top));
+                hatch.setAttribute('width', String(gap.right - gap.left));
+                hatch.setAttribute('height', String(gap.bottom - gap.top));
+                hatch.setAttribute('fill', `url(#${hatchPatternId})`);
+                connector.appendChild(hatch);
+
+                [gap.top + 0.75, gap.bottom - 0.75].forEach((y) => {
+                    const edge = document.createElementNS(svgNamespace, 'line');
+                    edge.classList.add('shot-group-connector-edge');
+                    edge.setAttribute('x1', String(gap.left));
+                    edge.setAttribute('x2', String(gap.right));
+                    edge.setAttribute('y1', String(y));
+                    edge.setAttribute('y2', String(y));
+                    connector.appendChild(edge);
+                });
+
+                layer.appendChild(connector);
+            });
         });
 
         if (layer.childNodes.length > 0) {
@@ -1237,51 +1319,64 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    function getGroupedShotCardFromPointerTarget(target) {
+    function getShotGroupIdFromPointerTarget(target) {
         if (!(target instanceof Element)) {
-            return null;
+            return '';
         }
         const card = target.closest('.shot-card.shot-grouped');
-        return card?.parentElement === storyboardGrid ? card : null;
+        if (card?.parentElement === storyboardGrid) {
+            return normalizeShotGroupId(card.dataset.shotGroupId);
+        }
+        const connector = target.closest('.shot-group-connector');
+        return normalizeShotGroupId(connector?.dataset.shotGroupId);
     }
 
-    function setShotGroupShadowHoverState(groupId, isHovered) {
+    function setShotGroupHoverState(groupId, isHovered) {
         const normalizedGroupId = normalizeShotGroupId(groupId);
         if (!normalizedGroupId) {
             return;
         }
-        storyboardGrid.querySelectorAll(':scope > .shot-group-frame-layer .shot-group-shadow-path')
-            .forEach((shadowPath) => {
-                if (normalizeShotGroupId(shadowPath.dataset.shotGroupId) === normalizedGroupId) {
-                    shadowPath.classList.toggle('is-hovered', isHovered);
+        const shouldHover = Boolean(isHovered)
+            && !storyboardGrid.classList.contains('is-multi-select')
+            && !storyboardGrid.classList.contains('is-sorting');
+        if (shouldHover) {
+            hoveredShotGroupId = normalizedGroupId;
+        } else if (hoveredShotGroupId === normalizedGroupId) {
+            hoveredShotGroupId = '';
+        }
+        storyboardGrid.querySelectorAll(':scope > .shot-card.shot-grouped').forEach((card) => {
+            if (normalizeShotGroupId(card.dataset.shotGroupId) === normalizedGroupId) {
+                card.classList.toggle('is-group-hovered', shouldHover);
+            }
+        });
+        storyboardGrid.querySelectorAll(':scope > .shot-group-frame-layer [data-shot-group-id]')
+            .forEach((groupElement) => {
+                if (normalizeShotGroupId(groupElement.dataset.shotGroupId) === normalizedGroupId) {
+                    groupElement.classList.toggle('is-hovered', shouldHover);
                 }
             });
     }
 
     storyboardGrid.addEventListener('mouseover', (event) => {
-        const card = getGroupedShotCardFromPointerTarget(event.target);
-        if (!card) {
+        const groupId = getShotGroupIdFromPointerTarget(event.target);
+        if (!groupId) {
             return;
         }
-        const groupId = normalizeShotGroupId(card.dataset.shotGroupId);
-        const previousCard = getGroupedShotCardFromPointerTarget(event.relatedTarget);
-        if (normalizeShotGroupId(previousCard?.dataset.shotGroupId) === groupId) {
+        if (getShotGroupIdFromPointerTarget(event.relatedTarget) === groupId) {
             return;
         }
-        setShotGroupShadowHoverState(groupId, true);
+        setShotGroupHoverState(groupId, true);
     });
 
     storyboardGrid.addEventListener('mouseout', (event) => {
-        const card = getGroupedShotCardFromPointerTarget(event.target);
-        if (!card) {
+        const groupId = getShotGroupIdFromPointerTarget(event.target);
+        if (!groupId) {
             return;
         }
-        const groupId = normalizeShotGroupId(card.dataset.shotGroupId);
-        const nextCard = getGroupedShotCardFromPointerTarget(event.relatedTarget);
-        if (normalizeShotGroupId(nextCard?.dataset.shotGroupId) === groupId) {
+        if (getShotGroupIdFromPointerTarget(event.relatedTarget) === groupId) {
             return;
         }
-        setShotGroupShadowHoverState(groupId, false);
+        setShotGroupHoverState(groupId, false);
     });
 
     function areShotCardsContiguousInSameScene(cards) {
@@ -1637,6 +1732,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
+        if (nextEnabled && hoveredShotGroupId) {
+            setShotGroupHoverState(hoveredShotGroupId, false);
+        }
         isMultiSelectMode = nextEnabled;
         storyboardGrid.classList.toggle('is-multi-select', isMultiSelectMode);
         if (storyboardSortable) {
@@ -2497,6 +2595,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function appendPrintShotGroupConnectors(grid, entries, columnCount = 5) {
+        const svgNamespace = 'http://www.w3.org/2000/svg';
         for (let index = 1; index < entries.length; index += 1) {
             const previous = entries[index - 1];
             const current = entries[index];
@@ -2514,6 +2613,39 @@ document.addEventListener('DOMContentLoaded', async () => {
             connector.setAttribute('aria-hidden', 'true');
             connector.style.gridColumn = String((previous.slotIndex % columnCount) * 2 + 2);
             connector.style.gridRow = String(Math.floor(previous.slotIndex / columnCount) + 1);
+
+            const patternId = `print-shot-group-hatch-${printShotGroupPatternSequence += 1}`;
+            const svg = document.createElementNS(svgNamespace, 'svg');
+            svg.classList.add('print-shot-group-connector-svg');
+            svg.setAttribute('width', '100%');
+            svg.setAttribute('height', '100%');
+            svg.setAttribute('preserveAspectRatio', 'none');
+            svg.setAttribute('focusable', 'false');
+
+            const definitions = document.createElementNS(svgNamespace, 'defs');
+            const pattern = document.createElementNS(svgNamespace, 'pattern');
+            pattern.setAttribute('id', patternId);
+            pattern.setAttribute('width', '4');
+            pattern.setAttribute('height', '4');
+            pattern.setAttribute('patternUnits', 'userSpaceOnUse');
+            pattern.setAttribute('patternTransform', 'rotate(45)');
+
+            const stripe = document.createElementNS(svgNamespace, 'rect');
+            stripe.classList.add('print-shot-group-hatch-stripe');
+            stripe.setAttribute('x', '0');
+            stripe.setAttribute('y', '0');
+            stripe.setAttribute('width', '1.5');
+            stripe.setAttribute('height', '4');
+            pattern.appendChild(stripe);
+            definitions.appendChild(pattern);
+            svg.appendChild(definitions);
+
+            const hatch = document.createElementNS(svgNamespace, 'rect');
+            hatch.setAttribute('width', '100%');
+            hatch.setAttribute('height', '100%');
+            hatch.setAttribute('fill', `url(#${patternId})`);
+            svg.appendChild(hatch);
+            connector.appendChild(svg);
             grid.appendChild(connector);
         }
     }
@@ -3354,6 +3486,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             dragClass: 'sortable-drag',
             onStart: function (evt) {
                 clearTextSelection();
+                if (hoveredShotGroupId) {
+                    setShotGroupHoverState(hoveredShotGroupId, false);
+                }
                 storyboardGrid.classList.add('is-sorting');
                 document.body.classList.add('is-sorting');
                 if (evt.item && evt.item.classList.contains('scene-divider')) {
