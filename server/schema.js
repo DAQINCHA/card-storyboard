@@ -3,20 +3,23 @@ const { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync,
 const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 8;
 const MIGRATIONS = Object.freeze({
   1: 'accounts-sharing-and-edit-locks',
   2: 'project-scoped-reusable-share-links',
   3: 'writing-area-default-scene-header-colors',
   4: 'project-presence-heartbeats',
   5: 'project-presence-per-browser-tab',
-  6: 'project-rundown-and-logical-shot-ids'
+  6: 'project-rundown-and-logical-shot-ids',
+  7: 'logical-shot-unit-group-consistency',
+  8: 'shot-unit-id-only-groups'
 });
 const MIGRATION_NAME = MIGRATIONS[SCHEMA_VERSION];
 const MIGRATION_CHECKSUM = crypto.createHash('sha256').update(MIGRATION_NAME).digest('hex');
 const LEGACY_DEFAULT_SCENE_HEADER_COLOR = '#64748b';
 const DEFAULT_SCENE_HEADER_COLOR = '#fffdf8';
 const EMPTY_RUNDOWN_JSON = JSON.stringify({ version: 1, days: [] });
+const STABLE_ID_PATTERN = /^[A-Za-z0-9_-]{1,100}$/;
 
 function migrationChecksum(version) {
   return crypto.createHash('sha256').update(MIGRATIONS[version]).digest('hex');
@@ -292,7 +295,179 @@ function createVersionFiveSchema(db) {
   `);
 }
 
-function migrateLogicalShotIds(shotsJson) {
+function normalizeLogicalShotUnitId(value) {
+  const id = typeof value === 'string' ? value.trim() : '';
+  return STABLE_ID_PATTERN.test(id) ? id : '';
+}
+
+function normalizeLogicalShotGroupId(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function collectRundownShotUnitIds(value) {
+  let rundown = value;
+  if (typeof value === 'string') {
+    try {
+      rundown = JSON.parse(value || '{}');
+    } catch {
+      return new Set();
+    }
+  }
+  if (!rundown || typeof rundown !== 'object' || Array.isArray(rundown)) return new Set();
+  const shotUnitIds = new Set();
+  (Array.isArray(rundown.days) ? rundown.days : []).forEach((day) => {
+    (Array.isArray(day?.items) ? day.items : []).forEach((item) => {
+      if (item?.type !== 'shot') return;
+      const shotUnitId = normalizeLogicalShotUnitId(item.shotUnitId);
+      if (shotUnitId) shotUnitIds.add(shotUnitId);
+    });
+  });
+  return shotUnitIds;
+}
+
+function canonicalizeLogicalShotUnits(shots, { preferredUnitIds = new Set() } = {}) {
+  const source = Array.isArray(shots) ? shots : [];
+  const preferredIds = new Set(
+    [...(preferredUnitIds instanceof Set ? preferredUnitIds : [])]
+      .map(normalizeLogicalShotUnitId)
+      .filter(Boolean)
+  );
+  const cardsByGroup = new Map();
+  source.forEach((shot) => {
+    if (!shot || typeof shot !== 'object' || Array.isArray(shot) || shot.type === 'scene-divider') return;
+    const groupId = normalizeLogicalShotGroupId(shot.groupId);
+    if (!groupId) return;
+    if (!cardsByGroup.has(groupId)) cardsByGroup.set(groupId, []);
+    cardsByGroup.get(groupId).push(shot);
+  });
+
+  const groupUnitIds = new Map();
+  const usedUnitIds = new Set();
+  cardsByGroup.forEach((cards, groupId) => {
+    const candidates = cards
+      .map((shot) => normalizeLogicalShotUnitId(shot.shotUnitId))
+      .filter(Boolean);
+    const savedId = candidates.find((candidate) => preferredIds.has(candidate) && !usedUnitIds.has(candidate))
+      || candidates.find((candidate) => !usedUnitIds.has(candidate));
+    const shotUnitId = savedId || crypto.randomUUID();
+    groupUnitIds.set(groupId, shotUnitId);
+    usedUnitIds.add(shotUnitId);
+  });
+
+  let changed = false;
+  const normalizedShots = source.map((shot) => {
+    if (!shot || typeof shot !== 'object' || Array.isArray(shot) || shot.type === 'scene-divider') return shot;
+    const groupId = normalizeLogicalShotGroupId(shot.groupId);
+    let shotUnitId = groupId ? groupUnitIds.get(groupId) : normalizeLogicalShotUnitId(shot.shotUnitId);
+    if (!groupId) {
+      if (!shotUnitId || usedUnitIds.has(shotUnitId)) shotUnitId = crypto.randomUUID();
+      usedUnitIds.add(shotUnitId);
+    }
+    if (shot.shotUnitId === shotUnitId) return shot;
+    changed = true;
+    return { ...shot, shotUnitId };
+  });
+  return { shots: normalizedShots, changed };
+}
+
+function normalizeSingleIdShotUnits(shots, { preferredUnitIds = new Set(), enforceStructure = true } = {}) {
+  const source = Array.isArray(shots) ? shots : [];
+  const preferredIds = new Set(
+    [...(preferredUnitIds instanceof Set ? preferredUnitIds : [])]
+      .map(normalizeLogicalShotUnitId)
+      .filter(Boolean)
+  );
+  const owners = new Map();
+  source.forEach((shot, shotIndex) => {
+    if (!shot || typeof shot !== 'object' || Array.isArray(shot) || shot.type === 'scene-divider') return;
+    const hasLegacyGroupId = Object.prototype.hasOwnProperty.call(shot, 'groupId');
+    const legacyGroupId = normalizeLogicalShotGroupId(shot.groupId);
+    const savedId = normalizeLogicalShotUnitId(shot.shotUnitId);
+    const ownerKey = hasLegacyGroupId
+      ? (legacyGroupId ? `legacy-group:${legacyGroupId}` : `legacy-card:${shotIndex}`)
+      : (savedId ? `unit:${savedId}` : `card:${shotIndex}`);
+    if (!owners.has(ownerKey)) {
+      owners.set(ownerKey, { cards: [], isLegacyGroup: Boolean(hasLegacyGroupId && legacyGroupId) });
+    }
+    owners.get(ownerKey).cards.push({ shot, shotIndex, savedId });
+  });
+
+  const usedUnitIds = new Set();
+  const createUniqueUnitId = () => {
+    let shotUnitId = crypto.randomUUID();
+    while (usedUnitIds.has(shotUnitId)) shotUnitId = crypto.randomUUID();
+    usedUnitIds.add(shotUnitId);
+    return shotUnitId;
+  };
+  const unitIdByOwner = new Map();
+  [...owners.entries()]
+    .sort(([, left], [, right]) => Number(!(left.isLegacyGroup || left.cards.length > 1)) - Number(!(right.isLegacyGroup || right.cards.length > 1)))
+    .forEach(([ownerKey, owner]) => {
+      const candidates = owner.cards.map((card) => card.savedId).filter(Boolean);
+      const savedId = candidates.find((candidate) => preferredIds.has(candidate) && !usedUnitIds.has(candidate))
+        || candidates.find((candidate) => !usedUnitIds.has(candidate));
+      const shotUnitId = savedId || createUniqueUnitId();
+      usedUnitIds.add(shotUnitId);
+      unitIdByOwner.set(ownerKey, shotUnitId);
+    });
+
+  let changed = false;
+  const normalizedShots = source.map((shot, shotIndex) => {
+    if (!shot || typeof shot !== 'object' || Array.isArray(shot)) return shot;
+    const hasGroupId = Object.prototype.hasOwnProperty.call(shot, 'groupId');
+    if (shot.type === 'scene-divider') {
+      if (!hasGroupId) return shot;
+      const normalized = { ...shot };
+      delete normalized.groupId;
+      changed = true;
+      return normalized;
+    }
+    const legacyGroupId = normalizeLogicalShotGroupId(shot.groupId);
+    const savedId = normalizeLogicalShotUnitId(shot.shotUnitId);
+    const ownerKey = hasGroupId
+      ? (legacyGroupId ? `legacy-group:${legacyGroupId}` : `legacy-card:${shotIndex}`)
+      : (savedId ? `unit:${savedId}` : `card:${shotIndex}`);
+    const shotUnitId = unitIdByOwner.get(ownerKey);
+    if (!hasGroupId && shot.shotUnitId === shotUnitId) return shot;
+    const normalized = { ...shot, shotUnitId };
+    delete normalized.groupId;
+    changed = true;
+    return normalized;
+  });
+
+  if (enforceStructure) {
+    const cardsByUnitId = new Map();
+    let sceneIndex = 0;
+    let positionInScene = 0;
+    normalizedShots.forEach((shot, shotIndex) => {
+      if (!shot || typeof shot !== 'object' || Array.isArray(shot)) return;
+      if (shot.type === 'scene-divider') {
+        sceneIndex += 1;
+        positionInScene = 0;
+        return;
+      }
+      const shotUnitId = normalizeLogicalShotUnitId(shot.shotUnitId);
+      if (!cardsByUnitId.has(shotUnitId)) cardsByUnitId.set(shotUnitId, []);
+      cardsByUnitId.get(shotUnitId).push({ shotIndex, sceneIndex, positionInScene });
+      positionInScene += 1;
+    });
+    cardsByUnitId.forEach((cards) => {
+      if (cards.length < 2) return;
+      const first = cards[0];
+      const isValidGroup = cards.length <= 3 && cards.every((card, cardIndex) => (
+        card.sceneIndex === first.sceneIndex && card.positionInScene === first.positionInScene + cardIndex
+      ));
+      if (isValidGroup) return;
+      cards.slice(1).forEach(({ shotIndex }) => {
+        normalizedShots[shotIndex] = { ...normalizedShots[shotIndex], shotUnitId: createUniqueUnitId() };
+        changed = true;
+      });
+    });
+  }
+  return { shots: normalizedShots, changed };
+}
+
+function migrateLogicalShotIds(shotsJson, preferredUnitIds = new Set()) {
   let shots;
   try {
     shots = JSON.parse(shotsJson || '[]');
@@ -300,33 +475,8 @@ function migrateLogicalShotIds(shotsJson) {
     return null;
   }
   if (!Array.isArray(shots)) return null;
-
-  let changed = false;
-  const groupIds = new Map();
-  const usedUngroupedIds = new Set();
-  const migratedShots = shots.map((shot) => {
-    if (!shot || typeof shot !== 'object' || Array.isArray(shot) || shot.type === 'scene-divider') return shot;
-    const groupId = typeof shot.groupId === 'string' ? shot.groupId.trim() : '';
-    const savedId = typeof shot.shotUnitId === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(shot.shotUnitId.trim())
-      ? shot.shotUnitId.trim()
-      : '';
-    let shotUnitId = savedId;
-    if (groupId) {
-      if (groupIds.has(groupId)) {
-        shotUnitId = groupIds.get(groupId);
-      } else {
-        shotUnitId = shotUnitId || crypto.randomUUID();
-        groupIds.set(groupId, shotUnitId);
-      }
-    } else if (!shotUnitId || usedUngroupedIds.has(shotUnitId)) {
-      shotUnitId = crypto.randomUUID();
-    }
-    usedUngroupedIds.add(shotUnitId);
-    if (shot.shotUnitId === shotUnitId) return shot;
-    changed = true;
-    return { ...shot, shotUnitId };
-  });
-  return changed ? JSON.stringify(migratedShots) : null;
+  const normalized = canonicalizeLogicalShotUnits(shots, { preferredUnitIds });
+  return normalized.changed ? JSON.stringify(normalized.shots) : null;
 }
 
 function createVersionSixSchema(db) {
@@ -340,12 +490,37 @@ function createVersionSixSchema(db) {
   });
 }
 
+function createVersionSevenSchema(db) {
+  const updateProject = db.prepare('UPDATE projects SET shots_json = ? WHERE id = ?');
+  db.prepare('SELECT id, shots_json, rundown_json FROM projects').all().forEach((project) => {
+    const migratedShotsJson = migrateLogicalShotIds(project.shots_json, collectRundownShotUnitIds(project.rundown_json));
+    if (migratedShotsJson !== null) updateProject.run(migratedShotsJson, project.id);
+  });
+}
+
+function createVersionEightSchema(db) {
+  const updateProject = db.prepare('UPDATE projects SET shots_json = ? WHERE id = ?');
+  db.prepare('SELECT id, shots_json, rundown_json FROM projects').all().forEach((project) => {
+    let shots;
+    try {
+      shots = JSON.parse(project.shots_json || '[]');
+    } catch {
+      return;
+    }
+    if (!Array.isArray(shots)) return;
+    const normalized = normalizeSingleIdShotUnits(shots, {
+      preferredUnitIds: collectRundownShotUnitIds(project.rundown_json)
+    });
+    if (normalized.changed) updateProject.run(JSON.stringify(normalized.shots), project.id);
+  });
+}
+
 function collectProjectRows(db) {
   const rundownColumn = hasColumn(db, 'projects', 'rundown_json') ? ', rundown_json' : '';
   return db.prepare(`SELECT id, name, scene, aspect_ratio, shots_json, updated_at${rundownColumn} FROM projects ORDER BY id`).all();
 }
 
-function assertExpectedProjectData(db, beforeProjects) {
+function assertExpectedProjectData(db, beforeProjects, { sourceVersion = 0 } = {}) {
   const actualProjects = collectProjectRows(db);
   if (actualProjects.length !== beforeProjects.length) throw new Error('Existing project data changed unexpectedly during migration');
   for (let index = 0; index < beforeProjects.length; index += 1) {
@@ -356,16 +531,62 @@ function assertExpectedProjectData(db, beforeProjects) {
     }
     const expectedShots = JSON.parse(migrateSceneHeaderColors(before.shots_json) || before.shots_json || '[]');
     const actualShots = JSON.parse(actual.shots_json || '[]');
-    const withoutLogicalIds = actualShots.map((shot) => {
+    const withoutLogicalMetadata = (shots) => shots.map((shot) => {
       if (!shot || typeof shot !== 'object' || Array.isArray(shot)) return shot;
       const copy = { ...shot };
       delete copy.shotUnitId;
+      delete copy.groupId;
       return copy;
     });
-    if (JSON.stringify(expectedShots) !== JSON.stringify(withoutLogicalIds)) {
+    if (JSON.stringify(withoutLogicalMetadata(expectedShots)) !== JSON.stringify(withoutLogicalMetadata(actualShots))) {
       throw new Error('Existing project data changed unexpectedly during migration');
     }
-    if ('rundown_json' in actual && actual.rundown_json !== EMPTY_RUNDOWN_JSON) {
+    const expectedUnitIds = new Map();
+    const actualUnitOwners = new Map();
+    const expectedSavedIdCounts = new Map();
+    expectedShots.forEach((shot) => {
+      if (!shot || typeof shot !== 'object' || Array.isArray(shot) || shot.type === 'scene-divider') return;
+      const shotUnitId = normalizeLogicalShotUnitId(shot.shotUnitId);
+      if (shotUnitId) expectedSavedIdCounts.set(shotUnitId, (expectedSavedIdCounts.get(shotUnitId) || 0) + 1);
+    });
+    expectedShots.forEach((shot, shotIndex) => {
+      if (!shot || typeof shot !== 'object' || Array.isArray(shot) || shot.type === 'scene-divider') return;
+      const groupId = normalizeLogicalShotGroupId(shot.groupId);
+      const savedId = normalizeLogicalShotUnitId(shot.shotUnitId);
+      const expectedOwner = groupId
+        ? `group:${groupId}`
+        : (sourceVersion >= 7 && savedId && expectedSavedIdCounts.get(savedId) > 1 ? `unit:${savedId}` : `card:${shotIndex}`);
+      const actualShot = actualShots[shotIndex];
+      const actualUnitId = normalizeLogicalShotUnitId(actualShot?.shotUnitId);
+      if (!actualUnitId) throw new Error('Logical shot unit id was not initialized safely');
+      if (expectedUnitIds.has(expectedOwner) && expectedUnitIds.get(expectedOwner) !== actualUnitId) {
+        throw new Error('Existing visual shot group was split during migration');
+      }
+      if (actualUnitOwners.has(actualUnitId) && actualUnitOwners.get(actualUnitId) !== expectedOwner) {
+        throw new Error('Existing visual shot units were merged during migration');
+      }
+      expectedUnitIds.set(expectedOwner, actualUnitId);
+      actualUnitOwners.set(actualUnitId, expectedOwner);
+    });
+    actualShots.forEach((shot) => {
+      if (shot && typeof shot === 'object' && !Array.isArray(shot)
+        && Object.prototype.hasOwnProperty.call(shot, 'groupId')) {
+        throw new Error('Legacy group id was not removed during migration');
+      }
+    });
+    if ('rundown_json' in before && actual.rundown_json !== before.rundown_json) {
+      throw new Error('Existing project rundown changed unexpectedly during migration');
+    }
+    if ('rundown_json' in before) {
+      const beforeShotUnitIds = new Set(expectedShots.map((shot) => normalizeLogicalShotUnitId(shot?.shotUnitId)).filter(Boolean));
+      const actualShotUnitIds = new Set(actualShots.map((shot) => normalizeLogicalShotUnitId(shot?.shotUnitId)).filter(Boolean));
+      collectRundownShotUnitIds(before.rundown_json).forEach((shotUnitId) => {
+        if (beforeShotUnitIds.has(shotUnitId) && !actualShotUnitIds.has(shotUnitId)) {
+          throw new Error('Existing project rundown reference was lost during migration');
+        }
+      });
+    }
+    if (!('rundown_json' in before) && 'rundown_json' in actual && actual.rundown_json !== EMPTY_RUNDOWN_JSON) {
       throw new Error('Existing project rundown was not initialized safely');
     }
   }
@@ -401,7 +622,7 @@ function migrateDatabase(databasePath) {
     }
     return { migrated: false, backup: null };
   }
-  if (![1, 2, 3, 4, 5].includes(version)) {
+  if (![1, 2, 3, 4, 5, 6, 7].includes(version)) {
     db.close();
     const direction = version < 1 ? 'setup-admin or migration is required' : 'database is newer than this application';
     throw new Error(`Unsupported database schema version ${version}; ${direction}`);
@@ -433,12 +654,14 @@ function migrateDatabase(databasePath) {
       if (nextVersion === 4) createVersionFourSchema(db);
       if (nextVersion === 5) createVersionFiveSchema(db);
       if (nextVersion === 6) createVersionSixSchema(db);
+      if (nextVersion === 7) createVersionSevenSchema(db);
+      if (nextVersion === 8) createVersionEightSchema(db);
       db.prepare('INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)')
         .run(nextVersion, MIGRATIONS[nextVersion], migrationChecksum(nextVersion), Date.now());
       db.exec(`PRAGMA user_version = ${nextVersion}`);
     }
     const after = collectDataFingerprint(db);
-    assertExpectedProjectData(db, beforeProjects);
+    assertExpectedProjectData(db, beforeProjects, { sourceVersion: version });
     if (before.imageCount !== after.imageCount || before.imageHash !== after.imageHash) throw new Error('Existing image data changed during migration');
     const foreignKeyErrors = db.prepare('PRAGMA foreign_key_check').all();
     if (foreignKeyErrors.length) throw new Error('Foreign key validation failed after migration');
@@ -505,9 +728,15 @@ function setupDatabase({ databasePath, username, displayName, passwordHash, must
     createVersionSixSchema(db);
     db.prepare('INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)')
       .run(6, MIGRATIONS[6], migrationChecksum(6), now);
+    createVersionSevenSchema(db);
+    db.prepare('INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)')
+      .run(7, MIGRATIONS[7], migrationChecksum(7), now);
+    createVersionEightSchema(db);
+    db.prepare('INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)')
+      .run(8, MIGRATIONS[8], migrationChecksum(8), now);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     const after = collectDataFingerprint(db);
-    assertExpectedProjectData(db, beforeProjects);
+    assertExpectedProjectData(db, beforeProjects, { sourceVersion: version });
     if (before.imageCount !== after.imageCount || before.imageHash !== after.imageHash) throw new Error('Existing image data changed during migration');
     const foreignKeyErrors = db.prepare('PRAGMA foreign_key_check').all();
     if (foreignKeyErrors.length) {
@@ -568,11 +797,13 @@ module.exports = {
   MIGRATION_NAME,
   SCHEMA_VERSION,
   assertCurrentSchema,
+  collectRundownShotUnitIds,
   collectDataFingerprint,
   createBackup,
   createLegacyTables,
   getSchemaVersion,
   migrateDatabase,
+  normalizeSingleIdShotUnits,
   openDatabase,
   restoreDatabase,
   setupDatabase

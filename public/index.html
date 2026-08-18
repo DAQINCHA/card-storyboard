@@ -223,10 +223,22 @@
                         <span>场次</span>
                         <select id="rundown-scene-filter"><option value="">全部场次</option></select>
                     </label>
-                    <label class="rundown-filter-field">
-                        <span>颜色</span>
-                        <select id="rundown-color-filter"><option value="">全部颜色</option></select>
-                    </label>
+                    <div class="rundown-filter-field">
+                        <span id="rundown-color-filter-label">颜色</span>
+                        <div class="rundown-color-filter">
+                            <button id="rundown-color-filter" class="rundown-color-filter-trigger" type="button" value=""
+                                aria-haspopup="listbox" aria-expanded="false" aria-controls="rundown-color-filter-menu"
+                                aria-labelledby="rundown-color-filter-label rundown-color-filter-value">
+                                <span id="rundown-color-filter-value" class="rundown-color-filter-selection">
+                                    <span class="rundown-color-filter-dot is-all" aria-hidden="true"></span>
+                                    <span>全部颜色</span>
+                                </span>
+                                <span class="rundown-color-filter-chevron" aria-hidden="true">⌄</span>
+                            </button>
+                            <div id="rundown-color-filter-menu" class="rundown-color-filter-menu" role="listbox"
+                                aria-labelledby="rundown-color-filter-label" hidden></div>
+                        </div>
+                    </div>
                 </div>
                 <label class="rundown-filter-field">
                     <span>快速加入到</span>

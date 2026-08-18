@@ -193,7 +193,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let pendingShotGroupFrameRaf = null;
     let storyboardSortable = null;
     let isMultiSelectMode = false;
-    let hoveredShotGroupId = '';
+    let hoveredShotUnitId = '';
     let printShotGroupPatternSequence = 0;
     let selectedShotCards = new Set();
     let lastMultiSelectPointer = null;
@@ -719,12 +719,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                 let cardIndex = 0;
                 while (cardIndex < visibleSceneCards.length) {
                     const firstCard = visibleSceneCards[cardIndex];
-                    const groupId = normalizeShotGroupId(firstCard.dataset.shotGroupId);
+                    const shotUnitId = isShotCardGrouped(firstCard) ? getShotCardUnitId(firstCard) : '';
                     let unitSize = 1;
-                    if (groupId) {
+                    if (shotUnitId) {
                         while (
                             cardIndex + unitSize < visibleSceneCards.length
-                            && normalizeShotGroupId(visibleSceneCards[cardIndex + unitSize].dataset.shotGroupId) === groupId
+                            && getShotCardUnitId(visibleSceneCards[cardIndex + unitSize]) === shotUnitId
                         ) {
                             unitSize += 1;
                         }
@@ -1136,22 +1136,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         return Array.from(storyboardGrid.querySelectorAll('.shot-card.multi-selected'));
     }
 
-    function normalizeShotGroupId(value) {
+    function normalizeShotUnitId(value) {
         return typeof value === 'string' ? value.trim() : '';
     }
 
-    function setShotCardGroup(card, groupId) {
-        if (!card || !card.classList?.contains('shot-card')) {
-            return;
-        }
-        const normalizedGroupId = normalizeShotGroupId(groupId);
-        if (normalizedGroupId) {
-            card.dataset.shotGroupId = normalizedGroupId;
-            card.classList.add('shot-grouped');
-            return;
-        }
-        delete card.dataset.shotGroupId;
-        card.classList.remove('shot-grouped', 'is-group-hovered');
+    function getShotCardUnitId(card) {
+        return normalizeShotUnitId(card?.dataset?.shotUnitId);
+    }
+
+    function isShotCardGrouped(card) {
+        return Boolean(card?.classList?.contains('shot-grouped'));
     }
 
     function buildShotGroupUnionPath(rectangles) {
@@ -1378,18 +1372,18 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
         grid.querySelectorAll(':scope > .shot-group-frame-layer').forEach((layer) => layer.remove());
-        const cardsByGroup = new Map();
+        const cardsByUnitId = new Map();
         grid.querySelectorAll(':scope > .shot-card.shot-grouped').forEach((card) => {
-            const groupId = normalizeShotGroupId(card.dataset.shotGroupId);
-            if (!groupId) {
+            const shotUnitId = getShotCardUnitId(card);
+            if (!shotUnitId) {
                 return;
             }
-            if (!cardsByGroup.has(groupId)) {
-                cardsByGroup.set(groupId, []);
+            if (!cardsByUnitId.has(shotUnitId)) {
+                cardsByUnitId.set(shotUnitId, []);
             }
-            cardsByGroup.get(groupId).push(card);
+            cardsByUnitId.get(shotUnitId).push(card);
         });
-        if (cardsByGroup.size === 0) {
+        if (cardsByUnitId.size === 0) {
             return;
         }
 
@@ -1421,7 +1415,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         definitions.appendChild(hatchPattern);
         layer.appendChild(definitions);
 
-        cardsByGroup.forEach((cards, groupId) => {
+        cardsByUnitId.forEach((cards, shotUnitId) => {
             const rectangles = buildShotGroupFrameRectangles(cards, 0);
             const pathData = buildShotGroupUnionPath(rectangles);
             if (!pathData) {
@@ -1429,13 +1423,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
             const isHovered = !grid.classList.contains('is-multi-select')
                 && !grid.classList.contains('is-sorting')
-                && (hoveredShotGroupId === groupId || cards.some((card) => card.matches(':hover')));
+                && (hoveredShotUnitId === shotUnitId || cards.some((card) => card.matches(':hover')));
             cards.forEach((card) => card.classList.toggle('is-group-hovered', isHovered));
 
             const offsetShadow = document.createElementNS(svgNamespace, 'path');
             offsetShadow.classList.add('shot-group-shadow-path', 'shot-group-shadow-offset');
             offsetShadow.setAttribute('d', pathData);
-            offsetShadow.dataset.shotGroupId = groupId;
+            offsetShadow.dataset.shotUnitId = shotUnitId;
             offsetShadow.classList.toggle('is-hovered', isHovered);
             layer.appendChild(offsetShadow);
 
@@ -1443,7 +1437,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const connector = document.createElementNS(svgNamespace, 'g');
                 connector.classList.add('shot-group-connector');
                 connector.classList.toggle('is-hovered', isHovered);
-                connector.dataset.shotGroupId = groupId;
+                connector.dataset.shotUnitId = shotUnitId;
 
                 const hatch = document.createElementNS(svgNamespace, 'rect');
                 hatch.classList.add('shot-group-hatch-connector');
@@ -1483,64 +1477,64 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    function getShotGroupIdFromPointerTarget(target) {
+    function getShotGroupUnitIdFromPointerTarget(target) {
         if (!(target instanceof Element)) {
             return '';
         }
         const card = target.closest('.shot-card.shot-grouped');
         if (card?.parentElement === storyboardGrid) {
-            return normalizeShotGroupId(card.dataset.shotGroupId);
+            return getShotCardUnitId(card);
         }
         const connector = target.closest('.shot-group-connector');
-        return normalizeShotGroupId(connector?.dataset.shotGroupId);
+        return normalizeShotUnitId(connector?.dataset.shotUnitId);
     }
 
-    function setShotGroupHoverState(groupId, isHovered) {
-        const normalizedGroupId = normalizeShotGroupId(groupId);
-        if (!normalizedGroupId) {
+    function setShotGroupHoverState(shotUnitId, isHovered) {
+        const normalizedUnitId = normalizeShotUnitId(shotUnitId);
+        if (!normalizedUnitId) {
             return;
         }
         const shouldHover = Boolean(isHovered)
             && !storyboardGrid.classList.contains('is-multi-select')
             && !storyboardGrid.classList.contains('is-sorting');
         if (shouldHover) {
-            hoveredShotGroupId = normalizedGroupId;
-        } else if (hoveredShotGroupId === normalizedGroupId) {
-            hoveredShotGroupId = '';
+            hoveredShotUnitId = normalizedUnitId;
+        } else if (hoveredShotUnitId === normalizedUnitId) {
+            hoveredShotUnitId = '';
         }
         storyboardGrid.querySelectorAll(':scope > .shot-card.shot-grouped').forEach((card) => {
-            if (normalizeShotGroupId(card.dataset.shotGroupId) === normalizedGroupId) {
+            if (getShotCardUnitId(card) === normalizedUnitId) {
                 card.classList.toggle('is-group-hovered', shouldHover);
             }
         });
-        storyboardGrid.querySelectorAll(':scope > .shot-group-frame-layer [data-shot-group-id]')
+        storyboardGrid.querySelectorAll(':scope > .shot-group-frame-layer [data-shot-unit-id]')
             .forEach((groupElement) => {
-                if (normalizeShotGroupId(groupElement.dataset.shotGroupId) === normalizedGroupId) {
+                if (normalizeShotUnitId(groupElement.dataset.shotUnitId) === normalizedUnitId) {
                     groupElement.classList.toggle('is-hovered', shouldHover);
                 }
             });
     }
 
     storyboardGrid.addEventListener('mouseover', (event) => {
-        const groupId = getShotGroupIdFromPointerTarget(event.target);
-        if (!groupId) {
+        const shotUnitId = getShotGroupUnitIdFromPointerTarget(event.target);
+        if (!shotUnitId) {
             return;
         }
-        if (getShotGroupIdFromPointerTarget(event.relatedTarget) === groupId) {
+        if (getShotGroupUnitIdFromPointerTarget(event.relatedTarget) === shotUnitId) {
             return;
         }
-        setShotGroupHoverState(groupId, true);
+        setShotGroupHoverState(shotUnitId, true);
     });
 
     storyboardGrid.addEventListener('mouseout', (event) => {
-        const groupId = getShotGroupIdFromPointerTarget(event.target);
-        if (!groupId) {
+        const shotUnitId = getShotGroupUnitIdFromPointerTarget(event.target);
+        if (!shotUnitId) {
             return;
         }
-        if (getShotGroupIdFromPointerTarget(event.relatedTarget) === groupId) {
+        if (getShotGroupUnitIdFromPointerTarget(event.relatedTarget) === shotUnitId) {
             return;
         }
-        setShotGroupHoverState(groupId, false);
+        setShotGroupHoverState(shotUnitId, false);
     });
 
     function areShotCardsContiguousInSameScene(cards) {
@@ -1569,33 +1563,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         return sceneIndexes.size === 1 && !sceneIndexes.has(-1);
     }
 
-    function cleanupInvalidShotGroups() {
-        const cardsByGroup = new Map();
-        storyboardGrid.querySelectorAll('.shot-card').forEach((card) => {
-            const groupId = normalizeShotGroupId(card.dataset.shotGroupId);
-            if (!groupId) {
-                setShotCardGroup(card, '');
-                return;
-            }
-            if (!cardsByGroup.has(groupId)) {
-                cardsByGroup.set(groupId, []);
-            }
-            cardsByGroup.get(groupId).push(card);
-        });
-        cardsByGroup.forEach((cards) => {
-            if (cards.length > 3 || !areShotCardsContiguousInSameScene(cards)) {
-                cards.forEach((card) => setShotCardGroup(card, ''));
-            }
-        });
-    }
-
-    function createShotGroupId() {
-        if (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
-            return `shot-group-${globalThis.crypto.randomUUID()}`;
-        }
-        return `shot-group-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    }
-
     function createShotUnitId() {
         if (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
             return `shot-unit-${globalThis.crypto.randomUUID()}`;
@@ -1603,23 +1570,55 @@ document.addEventListener('DOMContentLoaded', async () => {
         return `shot-unit-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     }
 
-    function reconcileShotUnitIds() {
-        const groupUnitIds = new Map();
-        const usedUngroupedIds = new Set();
-        storyboardGrid.querySelectorAll('.shot-card').forEach((card) => {
-            const groupId = normalizeShotGroupId(card.dataset.shotGroupId);
-            let shotUnitId = String(card.dataset.shotUnitId || '').trim();
-            if (groupId) {
-                if (groupUnitIds.has(groupId)) shotUnitId = groupUnitIds.get(groupId);
-                else {
-                    shotUnitId = shotUnitId || createShotUnitId();
-                    groupUnitIds.set(groupId, shotUnitId);
-                }
-            } else if (!shotUnitId || usedUngroupedIds.has(shotUnitId)) {
-                shotUnitId = createShotUnitId();
+    function createUniqueShotUnitId(usedUnitIds = null) {
+        const used = usedUnitIds || new Set(
+            Array.from(storyboardGrid.querySelectorAll('.shot-card'))
+                .map(getShotCardUnitId)
+                .filter(Boolean)
+        );
+        let shotUnitId = createShotUnitId();
+        while (used.has(shotUnitId)) {
+            shotUnitId = createShotUnitId();
+        }
+        used.add(shotUnitId);
+        return shotUnitId;
+    }
+
+    function reconcileShotUnits() {
+        const cards = Array.from(storyboardGrid.querySelectorAll('.shot-card'));
+        const usedUnitIds = new Set(cards.map(getShotCardUnitId).filter(Boolean));
+        cards.forEach((card) => {
+            let shotUnitId = getShotCardUnitId(card);
+            if (!shotUnitId) {
+                shotUnitId = createUniqueShotUnitId(usedUnitIds);
+                card.dataset.shotUnitId = shotUnitId;
             }
-            usedUngroupedIds.add(shotUnitId);
-            card.dataset.shotUnitId = shotUnitId;
+        });
+
+        const cardsByUnitId = new Map();
+        cards.forEach((card) => {
+            const shotUnitId = getShotCardUnitId(card);
+            if (!cardsByUnitId.has(shotUnitId)) cardsByUnitId.set(shotUnitId, []);
+            cardsByUnitId.get(shotUnitId).push(card);
+        });
+        cardsByUnitId.forEach((unitCards) => {
+            if (unitCards.length > 1
+                && (unitCards.length > 3 || !areShotCardsContiguousInSameScene(unitCards))) {
+                unitCards.slice(1).forEach((card) => {
+                    card.dataset.shotUnitId = createUniqueShotUnitId(usedUnitIds);
+                });
+            }
+        });
+
+        const unitCounts = new Map();
+        cards.forEach((card) => {
+            const shotUnitId = getShotCardUnitId(card);
+            unitCounts.set(shotUnitId, (unitCounts.get(shotUnitId) || 0) + 1);
+        });
+        cards.forEach((card) => {
+            const grouped = (unitCounts.get(getShotCardUnitId(card)) || 0) > 1;
+            card.classList.toggle('shot-grouped', grouped);
+            if (!grouped) card.classList.remove('is-group-hovered');
         });
     }
 
@@ -1644,7 +1643,21 @@ document.addEventListener('DOMContentLoaded', async () => {
             .map((item) => item.shotUnitId));
         const selectedUnitIds = [...new Set(selectedCards.map((card) => card.dataset.shotUnitId).filter(Boolean))];
         const scheduledSelectedIds = selectedUnitIds.filter((id) => scheduledIds.has(id));
-        if (scheduledSelectedIds.length > 1 && !window.confirm('所选镜头中有多个已经排入 Rundown。打组后只保留拍摄顺序最早的一项，是否继续？')) {
+        const selectedCardSet = new Set(selectedCards);
+        const allCards = Array.from(storyboardGrid.querySelectorAll('.shot-card'));
+        const partiallySelectedScheduledUnits = new Set(selectedUnitIds.filter((shotUnitId) => {
+            if (!scheduledIds.has(shotUnitId)) return false;
+            const unitCards = allCards.filter((card) => getShotCardUnitId(card) === shotUnitId);
+            return unitCards.length > 1 && unitCards.some((card) => !selectedCardSet.has(card));
+        }));
+        const confirmationMessages = [];
+        if (partiallySelectedScheduledUnits.size > 0) {
+            confirmationMessages.push('所选卡片包含已排入 Rundown 的镜头组的一部分。打组后，该排期会转移到新镜头组，原镜头组将不再保留该排期。');
+        }
+        if (scheduledSelectedIds.length > 1) {
+            confirmationMessages.push('所选镜头中有多个已经排入 Rundown。打组后只保留拍摄顺序最早的一项。');
+        }
+        if (confirmationMessages.length > 0 && !window.confirm(`${confirmationMessages.join('\n\n')}\n\n是否继续？`)) {
             return;
         }
         const orderedScheduledItems = [...(currentRundown.days || [])]
@@ -1657,12 +1670,21 @@ document.addEventListener('DOMContentLoaded', async () => {
                 day.items = (day.items || []).filter((item) => item.type !== 'shot' || !selectedUnitIds.includes(item.shotUnitId) || item.shotUnitId === keptScheduledId);
             });
         }
-        const groupId = createShotGroupId();
+        const usedUnitIds = new Set(allCards.map(getShotCardUnitId).filter(Boolean));
+        selectedUnitIds.forEach((selectedUnitId) => {
+            const remainingCards = allCards.filter((card) => (
+                !selectedCardSet.has(card) && getShotCardUnitId(card) === selectedUnitId
+            ));
+            if (remainingCards.length === 0) return;
+            const remainingUnitId = createUniqueShotUnitId(usedUnitIds);
+            remainingCards.forEach((card) => {
+                card.dataset.shotUnitId = remainingUnitId;
+            });
+        });
         selectedCards.forEach((card) => {
-            setShotCardGroup(card, groupId);
             card.dataset.shotUnitId = shotUnitId;
         });
-        cleanupInvalidShotGroups();
+        reconcileShotUnits();
         updateShotNumbers();
         scheduleSaveState();
         setMultiSelectMode(false);
@@ -1673,12 +1695,28 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
         const selectedCards = getSelectedShotCardsInDomOrder();
-        if (!selectedCards.some((card) => normalizeShotGroupId(card.dataset.shotGroupId))) {
+        if (!selectedCards.some(isShotCardGrouped)) {
             return;
         }
-        selectedCards.forEach((card) => setShotCardGroup(card, ''));
-        reconcileShotUnitIds();
-        cleanupInvalidShotGroups();
+        const allCards = Array.from(storyboardGrid.querySelectorAll('.shot-card'));
+        const selectedCardSet = new Set(selectedCards);
+        const usedUnitIds = new Set(allCards.map(getShotCardUnitId).filter(Boolean));
+        const selectedByUnitId = new Map();
+        selectedCards.filter(isShotCardGrouped).forEach((card) => {
+            const shotUnitId = getShotCardUnitId(card);
+            if (!selectedByUnitId.has(shotUnitId)) selectedByUnitId.set(shotUnitId, []);
+            selectedByUnitId.get(shotUnitId).push(card);
+        });
+        selectedByUnitId.forEach((unitSelectedCards, shotUnitId) => {
+            const hasUnselectedCards = allCards.some((card) => (
+                !selectedCardSet.has(card) && getShotCardUnitId(card) === shotUnitId
+            ));
+            unitSelectedCards.forEach((card, index) => {
+                if (!hasUnselectedCards && index === 0) return;
+                card.dataset.shotUnitId = createUniqueShotUnitId(usedUnitIds);
+            });
+        });
+        reconcileShotUnits();
         updateShotNumbers();
         scheduleSaveState();
         setMultiSelectMode(false);
@@ -1817,7 +1855,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     card.remove();
                 }
             });
-            cleanupInvalidShotGroups();
+            reconcileShotUnits();
             updateShotNumbers();
             scheduleSaveState();
             if (exitMultiSelectAfterDone) {
@@ -1950,7 +1988,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 : '请选择同一场内连续的卡片';
         multiSelectUngroupBtn.classList.toggle(
             'hidden',
-            !selectedCards.some((card) => normalizeShotGroupId(card.dataset.shotGroupId))
+            !selectedCards.some(isShotCardGrouped)
         );
         refreshMoveTargets();
         showMultiSelectPanelAt(clientX, clientY);
@@ -1977,8 +2015,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
-        if (nextEnabled && hoveredShotGroupId) {
-            setShotGroupHoverState(hoveredShotGroupId, false);
+        if (nextEnabled && hoveredShotUnitId) {
+            setShotGroupHoverState(hoveredShotUnitId, false);
         }
         isMultiSelectMode = nextEnabled;
         storyboardGrid.classList.toggle('is-multi-select', isMultiSelectMode);
@@ -2373,7 +2411,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         return {
             shotUnitId: String(card.dataset.shotUnitId || '').trim() || createShotUnitId(),
-            groupId: normalizeShotGroupId(card.dataset.shotGroupId),
             headerColor: colorWrapper?.dataset.color || '',
             vfx: Boolean(vfxCheckbox?.checked),
             timeRange: (typeof shotTimeInput?.value === 'string' ? shotTimeInput.value.trim() : '')
@@ -2612,21 +2649,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         perfMeasureSync('updateShotNumbers', () => {
             const insertedLeadingDivider = ensureFirstSceneDividerWhenSegmented();
             const cards = storyboardGrid.querySelectorAll('.shot-card');
-            const groupNumbers = new Map();
+            const unitNumbers = new Map();
             let nextShotNumber = 1;
             perfMeta.cardCount = cards.length;
             perfMeta.insertedLeadingDivider = insertedLeadingDivider;
-            cleanupInvalidShotGroups();
-            reconcileShotUnitIds();
+            reconcileShotUnits();
             cards.forEach((card) => {
-                const groupId = normalizeShotGroupId(card.dataset.shotGroupId);
-                let shotNumber = nextShotNumber;
-                if (groupId && groupNumbers.has(groupId)) {
-                    shotNumber = groupNumbers.get(groupId);
-                } else {
-                    if (groupId) {
-                        groupNumbers.set(groupId, shotNumber);
-                    }
+                const shotUnitId = getShotCardUnitId(card);
+                let shotNumber = unitNumbers.get(shotUnitId);
+                if (!shotNumber) {
+                    shotNumber = nextShotNumber;
+                    unitNumbers.set(shotUnitId, shotNumber);
                     nextShotNumber += 1;
                 }
                 card.querySelector('.shot-index').textContent = shotNumber;
@@ -2887,9 +2920,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         for (let index = 1; index < entries.length; index += 1) {
             const previous = entries[index - 1];
             const current = entries[index];
-            const groupId = normalizeShotGroupId(current.card.dataset.shotGroupId);
-            const isConnected = groupId
-                && groupId === normalizeShotGroupId(previous.card.dataset.shotGroupId)
+            const shotUnitId = isShotCardGrouped(current.card) ? getShotCardUnitId(current.card) : '';
+            const isConnected = shotUnitId
+                && shotUnitId === getShotCardUnitId(previous.card)
                 && current.slotIndex === previous.slotIndex + 1
                 && Math.floor(current.slotIndex / columnCount) === Math.floor(previous.slotIndex / columnCount);
             if (!isConnected) {
@@ -2897,7 +2930,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
             const connector = document.createElement('div');
             connector.className = 'print-shot-group-connector';
-            connector.dataset.shotGroupId = groupId;
+            connector.dataset.shotUnitId = shotUnitId;
             connector.setAttribute('aria-hidden', 'true');
             connector.style.gridColumn = String((previous.slotIndex % columnCount) * 2 + 2);
             connector.style.gridRow = String(Math.floor(previous.slotIndex / columnCount) + 1);
@@ -2942,13 +2975,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         const pageCapacity = columnCount * rowCount;
         const units = [];
         cards.forEach((card) => {
-            const groupId = normalizeShotGroupId(card.dataset.shotGroupId);
+            const shotUnitId = isShotCardGrouped(card) ? getShotCardUnitId(card) : '';
             const previousUnit = units[units.length - 1];
-            if (groupId && previousUnit?.groupId === groupId) {
+            if (shotUnitId && previousUnit?.shotUnitId === shotUnitId) {
                 previousUnit.cards.push(card);
                 return;
             }
-            units.push({ groupId, cards: [card] });
+            units.push({ shotUnitId, cards: [card] });
         });
 
         const pages = [];
@@ -2964,7 +2997,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         units.forEach((unit) => {
             const unitSize = unit.cards.length;
-            if (unit.groupId && unitSize > 1) {
+            if (unit.shotUnitId && unitSize > 1) {
                 const remainingInRow = columnCount - (nextSlot % columnCount);
                 if (unitSize > remainingInRow) {
                     nextSlot += remainingInRow;
@@ -2988,11 +3021,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     function createPrintCard(card, printIndex) {
         const cardClone = document.createElement('article');
         cardClone.className = 'shot-card';
-        const groupId = normalizeShotGroupId(card.dataset.shotGroupId);
-        if (groupId) {
+        const shotUnitId = getShotCardUnitId(card);
+        if (isShotCardGrouped(card)) {
             cardClone.classList.add('shot-grouped');
-            cardClone.dataset.shotGroupId = groupId;
         }
+        cardClone.dataset.shotUnitId = shotUnitId;
 
         const sourceHeader = card.querySelector('.shot-header');
         const header = document.createElement('header');
@@ -3815,8 +3848,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             dragClass: 'sortable-drag',
             onStart: function (evt) {
                 clearTextSelection();
-                if (hoveredShotGroupId) {
-                    setShotGroupHoverState(hoveredShotGroupId, false);
+                if (hoveredShotUnitId) {
+                    setShotGroupHoverState(hoveredShotUnitId, false);
                 }
                 storyboardGrid.classList.add('is-sorting');
                 document.body.classList.add('is-sorting');
@@ -4109,7 +4142,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         radios.forEach((radio) => radio.addEventListener('change', scheduleSaveState));
 
         if (shotData && typeof shotData === 'object') {
-            setShotCardGroup(card, shotData.groupId);
             if (typeof shotData.headerColor === 'string' && shotData.headerColor) {
                 setHeaderColor(shotData.headerColor, false);
             } else {
@@ -4187,7 +4219,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                 imageContainer.classList.remove('has-image');
             }
         } else {
-            setShotCardGroup(card, '');
             setHeaderColor(defaultColor, false);
             if (shotTimeInput) {
                 shotTimeInput.value = '';

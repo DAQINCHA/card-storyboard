@@ -22,8 +22,10 @@ const {
 const {
   SCHEMA_VERSION,
   assertCurrentSchema,
+  collectRundownShotUnitIds,
   collectDataFingerprint,
   migrateDatabase,
+  normalizeSingleIdShotUnits,
   openDatabase,
   restoreDatabase,
   setupDatabase
@@ -137,25 +139,8 @@ function normalizeRundown(value, validShotUnitIds = new Set()) {
   return { version: 1, days };
 }
 
-function ensureLogicalShotUnitIds(shots) {
-  const groupIds = new Map();
-  const usedUngroupedIds = new Set();
-  return shots.map((shot) => {
-    if (!shot || typeof shot !== 'object' || Array.isArray(shot) || isSceneDividerShot(shot)) return shot;
-    const groupId = normalizeStableId(shot.groupId);
-    let shotUnitId = normalizeStableId(shot.shotUnitId);
-    if (groupId) {
-      if (groupIds.has(groupId)) shotUnitId = groupIds.get(groupId);
-      else {
-        shotUnitId = shotUnitId || crypto.randomUUID();
-        groupIds.set(groupId, shotUnitId);
-      }
-    } else if (!shotUnitId || usedUngroupedIds.has(shotUnitId)) {
-      shotUnitId = crypto.randomUUID();
-    }
-    usedUngroupedIds.add(shotUnitId);
-    return { ...shot, shotUnitId };
-  });
+function ensureLogicalShotUnitIds(shots, preferredUnitIds = new Set()) {
+  return normalizeSingleIdShotUnits(shots, { preferredUnitIds }).shots;
 }
 
 function normalizeProjectId(value) {
@@ -488,13 +473,13 @@ function createStoryboardStore(databasePath) {
     return normalized;
   }
 
-  function normalizeShotsForStorage(projectId, shots) {
+  function normalizeShotsForStorage(projectId, shots, preferredUnitIds = new Set()) {
     const referenced = new Set();
     const normalized = shots.map((shot) => normalizeShotForStorage(projectId, shot, referenced));
     listImageIdsStmt.all(projectId).forEach(({ image_id: imageId }) => {
       if (!referenced.has(imageId)) deleteImageStmt.run(projectId, imageId);
     });
-    return ensureLogicalShotUnitIds(normalized);
+    return ensureLogicalShotUnitIds(normalized, preferredUnitIds);
   }
 
   function getLockRow(projectId) {
@@ -613,9 +598,9 @@ function createStoryboardStore(databasePath) {
       const scene = String(payload.scene ?? current.scene);
       const aspectRatio = String(payload.aspectRatio ?? current.aspect_ratio) || '16/9';
       const shots = Array.isArray(payload.shots) ? payload.shots : safeParseShots(current.shots_json);
-      const normalizedShots = normalizeShotsForStorage(projectId, shots);
-      const validShotUnitIds = new Set(normalizedShots.filter((shot) => !isSceneDividerShot(shot)).map((shot) => normalizeStableId(shot?.shotUnitId)).filter(Boolean));
       const rundownSource = Object.prototype.hasOwnProperty.call(payload, 'rundown') ? payload.rundown : current.rundown_json;
+      const normalizedShots = normalizeShotsForStorage(projectId, shots, collectRundownShotUnitIds(rundownSource));
+      const validShotUnitIds = new Set(normalizedShots.filter((shot) => !isSceneDividerShot(shot)).map((shot) => normalizeStableId(shot?.shotUnitId)).filter(Boolean));
       const normalizedRundown = normalizeRundown(rundownSource, validShotUnitIds);
       const result = updateProjectStmt.run(name, scene, aspectRatio, JSON.stringify(normalizedShots), JSON.stringify(normalizedRundown), projectId, baseVersion);
       if (Number(result.changes) !== 1) throw new HttpError(409, 'Project was changed by another editor', 'version_conflict');

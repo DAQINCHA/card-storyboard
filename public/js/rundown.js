@@ -76,7 +76,6 @@ function normalizeRundown(value) {
 function buildShotUnits(shots) {
     const units = [];
     const unitsById = new Map();
-    const groupNumbers = new Map();
     let sceneIndex = -1;
     let sceneLabel = '第1场';
     let nextShotNumber = 1;
@@ -88,19 +87,12 @@ function buildShotUnits(shots) {
             sceneLabel = String(shot.label || '').trim() || `第${sceneIndex + 1}场`;
             return;
         }
-        const groupId = String(shot.groupId || '').trim();
-        let displayNumber = nextShotNumber;
-        if (groupId && groupNumbers.has(groupId)) displayNumber = groupNumbers.get(groupId);
-        else {
-            if (groupId) groupNumbers.set(groupId, displayNumber);
-            nextShotNumber += 1;
-        }
-        const shotUnitId = String(shot.shotUnitId || '').trim() || `legacy-${displayNumber}-${units.length}`;
+        const shotUnitId = String(shot.shotUnitId || '').trim() || `legacy-${nextShotNumber}-${units.length}`;
         let unit = unitsById.get(shotUnitId);
         if (!unit) {
             unit = {
                 id: shotUnitId,
-                number: displayNumber,
+                number: nextShotNumber,
                 scene: sceneLabel,
                 cards: [],
                 colors: [],
@@ -114,6 +106,7 @@ function buildShotUnits(shots) {
             };
             unitsById.set(shotUnitId, unit);
             units.push(unit);
+            nextShotNumber += 1;
         }
         unit.cards.push(shot);
         unit.colors = unique([...unit.colors, shot.headerColor]);
@@ -139,10 +132,24 @@ function colorSwatches(colors, className = '') {
         .map((color) => `<i style="--swatch:${escapeHtml(color)}"></i>`).join('')}</span>`;
 }
 
-function unitContent(unit) {
+function unitContentSections(unit) {
     const actions = unit.actions.map((value, index) => unit.actions.length > 1 ? `${index + 1}. ${value}` : value).join(' / ');
     const notes = unit.notes.join(' / ');
-    return [actions, notes].filter(Boolean).join(' · ');
+    return [
+        actions ? { type: 'action', text: actions } : null,
+        notes ? { type: 'note', text: notes } : null
+    ].filter(Boolean);
+}
+
+function unitContent(unit) {
+    return unitContentSections(unit).map((section) => section.text).join(' · ');
+}
+
+function unitContentSectionsHtml(unit) {
+    const sections = unitContentSections(unit);
+    if (!sections.length) return '—';
+    return `<div class="rundown-content-sections">${sections
+        .map((section) => `<p class="is-${section.type}">${escapeHtml(section.text)}</p>`).join('')}</div>`;
 }
 
 function unitParameterRows(unit) {
@@ -177,6 +184,8 @@ export function createRundownController({
         search: view.querySelector('#rundown-search'),
         sceneFilter: view.querySelector('#rundown-scene-filter'),
         colorFilter: view.querySelector('#rundown-color-filter'),
+        colorFilterValue: view.querySelector('#rundown-color-filter-value'),
+        colorFilterMenu: view.querySelector('#rundown-color-filter-menu'),
         targetDay: view.querySelector('#rundown-target-day'),
         addFiltered: view.querySelector('#rundown-add-filtered-btn'),
         pool: view.querySelector('#rundown-shot-pool'),
@@ -193,6 +202,7 @@ export function createRundownController({
     let readOnly = true;
     let activeDrag = null;
     let previousDocumentTitle = '';
+    let colorFilterOptions = [];
 
     function applyProjectAspectRatio() {
         const aspect = ['16/9', '4/3', '2.35/1', '9/16'].includes(project?.aspectRatio)
@@ -241,17 +251,49 @@ export function createRundownController({
         return findDay(dayId)?.items?.find((item) => item.id === itemId) || null;
     }
 
+    function colorFilterDotHtml(color = '') {
+        const colorStyle = color ? ` style="--filter-color:${escapeHtml(color)}"` : '';
+        return `<span class="rundown-color-filter-dot${color ? '' : ' is-all'}"${colorStyle} aria-hidden="true"></span>`;
+    }
+
+    function setColorFilterExpanded(expanded, focusOption = false) {
+        elements.colorFilter.setAttribute('aria-expanded', String(expanded));
+        elements.colorFilterMenu.hidden = !expanded;
+        if (!expanded || !focusOption) return;
+        const selectedOption = elements.colorFilterMenu.querySelector('[aria-selected="true"]');
+        (selectedOption || elements.colorFilterMenu.querySelector('[role="option"]'))?.focus();
+    }
+
+    function syncColorFilterSelection(value) {
+        const normalizedValue = colorFilterOptions.includes(value) ? value : '';
+        const colorIndex = colorFilterOptions.indexOf(normalizedValue);
+        const label = colorIndex >= 0 ? `色组 ${colorIndex + 1}` : '全部颜色';
+        elements.colorFilter.value = normalizedValue;
+        elements.colorFilterValue.innerHTML = `${colorFilterDotHtml(normalizedValue)}<span>${label}</span>`;
+        elements.colorFilterMenu.querySelectorAll('[role="option"]').forEach((option) => {
+            option.setAttribute('aria-selected', String(option.dataset.color === normalizedValue));
+        });
+    }
+
     function buildFilterOptions() {
         const currentScene = elements.sceneFilter.value;
         const currentColor = elements.colorFilter.value;
         const scenes = unique(shotUnits.map((unit) => unit.scene));
         const colors = unique(shotUnits.flatMap((unit) => unit.colors));
+        colorFilterOptions = colors;
         elements.sceneFilter.innerHTML = '<option value="">全部场次</option>' + scenes
             .map((scene) => `<option value="${escapeHtml(scene)}">${escapeHtml(scene)}</option>`).join('');
-        elements.colorFilter.innerHTML = '<option value="">全部颜色</option>' + colors
-            .map((color, index) => `<option value="${escapeHtml(color)}">色组 ${index + 1} · ${escapeHtml(color)}</option>`).join('');
+        elements.colorFilterMenu.innerHTML = `
+            <button class="rundown-color-filter-option" type="button" role="option" tabindex="-1" data-color="">
+                <span class="rundown-color-filter-option-label">${colorFilterDotHtml()}<span>全部颜色</span></span>
+                <span class="rundown-color-filter-check" aria-hidden="true">✓</span>
+            </button>` + colors.map((color, index) => `
+            <button class="rundown-color-filter-option" type="button" role="option" tabindex="-1" data-color="${escapeHtml(color)}">
+                <span class="rundown-color-filter-option-label">${colorFilterDotHtml(color)}<span>色组 ${index + 1}</span></span>
+                <span class="rundown-color-filter-check" aria-hidden="true">✓</span>
+            </button>`).join('');
         if (scenes.includes(currentScene)) elements.sceneFilter.value = currentScene;
-        if (colors.includes(currentColor)) elements.colorFilter.value = currentColor;
+        syncColorFilterSelection(currentColor);
     }
 
     function renderPool() {
@@ -305,11 +347,12 @@ export function createRundownController({
     function renderShotCells(unit) {
         if (!unit) return '<td colspan="4" class="rundown-missing-shot">关联镜头已不存在</td>';
         const thumbnails = unit.images.slice(0, 3).map((src) => `<img src="${escapeHtml(src)}" alt="">`).join('') || '<span>无图</span>';
+        const multipleImageClass = unit.images.length > 1 ? ' has-multiple' : '';
         return `
-            <td class="rundown-shot-cell"><div class="rundown-row-thumbs">${thumbnails}</div></td>
+            <td class="rundown-shot-cell"><div class="rundown-row-thumbs${multipleImageClass}">${thumbnails}</div></td>
             <td class="rundown-parameters-cell">${unitParametersHtml(unit)}</td>
             <td>${escapeHtml(unit.scene)}</td>
-            <td class="rundown-content-cell">${escapeHtml(unitContent(unit) || '—')}</td>`;
+            <td class="rundown-content-cell">${unitContentSectionsHtml(unit)}</td>`;
     }
 
     function renderItem(day, item, overlapIds) {
@@ -528,7 +571,8 @@ export function createRundownController({
                     if (item.type === 'event') return `<tr class="rundown-print-event"><td><b>事项</b></td><td><b>${escapeHtml(item.startTime)}–${escapeHtml(item.endTime)}</b><small>${escapeHtml(durationLabel(item.startTime, item.endTime))}</small></td><td colspan="4">${escapeHtml(item.title)}</td></tr>`;
                     const unit = shotUnitsById.get(item.shotUnitId);
                     if (!unit) return '';
-                    return `<tr><td>${colorSwatches(unit.colors, 'print')}<b>SHOT #${unit.number}</b></td><td><b>${escapeHtml(item.startTime)}–${escapeHtml(item.endTime)}</b><small>${escapeHtml(durationLabel(item.startTime, item.endTime))}</small></td><td><div class="rundown-print-thumbs">${unit.images.slice(0, 3).map((src) => `<img src="${escapeHtml(src)}" alt="">`).join('') || '<span>无图</span>'}</div></td><td>${unitParametersHtml(unit, 'print')}</td><td>${escapeHtml(unit.scene)}</td><td>${escapeHtml(unitContent(unit) || '—')}</td></tr>`;
+                    const multipleImageClass = unit.images.length > 1 ? ' has-multiple' : '';
+                    return `<tr><td>${colorSwatches(unit.colors, 'print')}<b>SHOT #${unit.number}</b></td><td><b>${escapeHtml(item.startTime)}–${escapeHtml(item.endTime)}</b><small>${escapeHtml(durationLabel(item.startTime, item.endTime))}</small></td><td><div class="rundown-print-thumbs${multipleImageClass}">${unit.images.slice(0, 3).map((src) => `<img src="${escapeHtml(src)}" alt="">`).join('') || '<span>无图</span>'}</div></td><td>${unitParametersHtml(unit, 'print')}</td><td>${escapeHtml(unit.scene)}</td><td>${unitContentSectionsHtml(unit)}</td></tr>`;
                 }).join('')}</tbody></table>
             </section>`).join('');
     }
@@ -571,7 +615,47 @@ export function createRundownController({
     elements.back.addEventListener('click', () => onBack?.());
     elements.addDay.addEventListener('click', addDay);
     elements.export.addEventListener('click', exportPdf);
-    [elements.search, elements.sceneFilter, elements.colorFilter].forEach((control) => control.addEventListener('input', renderPool));
+    [elements.search, elements.sceneFilter].forEach((control) => control.addEventListener('input', renderPool));
+    elements.colorFilter.addEventListener('click', () => {
+        const expanded = elements.colorFilter.getAttribute('aria-expanded') === 'true';
+        setColorFilterExpanded(!expanded, !expanded);
+    });
+    elements.colorFilter.addEventListener('keydown', (event) => {
+        if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
+        event.preventDefault();
+        setColorFilterExpanded(true, true);
+        if (event.key === 'ArrowUp') elements.colorFilterMenu.querySelector('[role="option"]:last-child')?.focus();
+    });
+    elements.colorFilterMenu.addEventListener('click', (event) => {
+        const option = event.target.closest('[role="option"]');
+        if (!option) return;
+        syncColorFilterSelection(option.dataset.color || '');
+        setColorFilterExpanded(false);
+        elements.colorFilter.focus();
+        renderPool();
+    });
+    elements.colorFilterMenu.addEventListener('keydown', (event) => {
+        const options = [...elements.colorFilterMenu.querySelectorAll('[role="option"]')];
+        const currentIndex = options.indexOf(document.activeElement);
+        let nextIndex = null;
+        if (event.key === 'ArrowDown') nextIndex = (currentIndex + 1) % options.length;
+        if (event.key === 'ArrowUp') nextIndex = (currentIndex - 1 + options.length) % options.length;
+        if (event.key === 'Home') nextIndex = 0;
+        if (event.key === 'End') nextIndex = options.length - 1;
+        if (nextIndex !== null) {
+            event.preventDefault();
+            options[nextIndex]?.focus();
+        }
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            setColorFilterExpanded(false);
+            elements.colorFilter.focus();
+        }
+        if (event.key === 'Tab') setColorFilterExpanded(false);
+    });
+    document.addEventListener('click', (event) => {
+        if (!event.target.closest('.rundown-color-filter')) setColorFilterExpanded(false);
+    });
     elements.addFiltered.addEventListener('click', () => {
         const day = findDay(elements.targetDay.value);
         if (!day) return window.alert('请先添加并选择一个拍摄日。');
@@ -693,6 +777,7 @@ export function createRundownController({
             elements.search.value = '';
             elements.sceneFilter.value = '';
             elements.colorFilter.value = '';
+            setColorFilterExpanded(false);
             render();
         },
         setReadOnly(value) {

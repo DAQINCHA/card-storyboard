@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { mkdtempSync, readFileSync, rmSync } = require('node:fs');
+const { mkdtempSync, readFileSync, readdirSync, rmSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
@@ -138,7 +138,7 @@ test('serves hardened frontend and health endpoint without leaking the database 
     const healthResponse = await fetch(`${baseUrl}/api/health`);
     assert.equal(healthResponse.status, 200);
     const health = await healthResponse.json();
-    assert.deepEqual(health, { ok: true, service: 'card-storyboard', schemaVersion: 6 });
+    assert.deepEqual(health, { ok: true, service: 'card-storyboard', schemaVersion: 8 });
     assert.equal(healthResponse.headers.get('x-frame-options'), 'DENY');
     assert.match(healthResponse.headers.get('content-security-policy'), /default-src 'self'/);
 
@@ -269,6 +269,133 @@ test('numbers default project names independently for each owner account', async
     const accountSecond = await api(baseUrl, account, '/api/projects', { method: 'POST', body: {} });
     assert.equal((await accountFirst.json()).name, '新项目 1');
     assert.equal((await accountSecond.json()).name, '新项目 2');
+  });
+});
+
+test('accepts legacy group payloads without persisting groupId', async () => {
+  await withServer(async (baseUrl) => {
+    const admin = await login(baseUrl);
+    const created = await (await api(baseUrl, admin, '/api/projects', {
+      method: 'POST', body: { name: 'Partial regrouping' }
+    })).json();
+    const lock = await (await api(baseUrl, admin, `/api/projects/${created.id}/lock`, {
+      method: 'POST', body: {}
+    })).json();
+    const sharedId = 'shot-unit-before-partial-regroup';
+    const scheduledAlternateId = 'shot-unit-scheduled-alternate';
+    const existingSingleIdGroup = 'shot-unit-existing-single-id-group';
+    const response = await api(baseUrl, admin, `/api/projects/${created.id}`, {
+      method: 'PUT',
+      headers: { 'X-Edit-Lease': lock.leaseToken },
+      body: {
+        baseVersion: created.version,
+        shots: [
+          { shotUnitId: sharedId, action: '拆出的独立镜头' },
+          { shotUnitId: sharedId, groupId: 'new-visual-group', action: '编组镜头一' },
+          { shotUnitId: sharedId, groupId: 'new-visual-group', action: '编组镜头二' },
+          { shotUnitId: sharedId, groupId: 'new-visual-group', action: '编组镜头三' },
+          { shotUnitId: 'shot-unit-unscheduled-first', groupId: 'mixed-id-group', action: '历史 ID 一' },
+          { shotUnitId: scheduledAlternateId, groupId: 'mixed-id-group', action: '历史 ID 二' },
+          { shotUnitId: existingSingleIdGroup, action: '新格式编组一' },
+          { shotUnitId: existingSingleIdGroup, action: '新格式编组二' }
+        ],
+        rundown: {
+          version: 1,
+          days: [{
+            id: 'day-1', date: '2026-08-18',
+            items: [
+              { id: 'item-1', type: 'shot', shotUnitId: sharedId, startTime: '09:00', endTime: '10:00', setupLabel: '' },
+              { id: 'item-2', type: 'shot', shotUnitId: scheduledAlternateId, startTime: '10:00', endTime: '11:00', setupLabel: '' },
+              { id: 'item-3', type: 'shot', shotUnitId: existingSingleIdGroup, startTime: '11:00', endTime: '12:00', setupLabel: '' }
+            ]
+          }]
+        }
+      }
+    });
+    assert.equal(response.status, 200, await response.clone().text());
+    const saved = await response.json();
+    assert.notEqual(saved.shots[0].shotUnitId, sharedId);
+    assert.equal(saved.shots[1].shotUnitId, sharedId);
+    assert.equal(saved.shots[2].shotUnitId, sharedId);
+    assert.equal(saved.shots[3].shotUnitId, sharedId);
+    assert.equal(saved.shots[4].shotUnitId, scheduledAlternateId);
+    assert.equal(saved.shots[5].shotUnitId, scheduledAlternateId);
+    assert.equal(saved.shots[6].shotUnitId, existingSingleIdGroup);
+    assert.equal(saved.shots[7].shotUnitId, existingSingleIdGroup);
+    assert.ok(saved.shots.every((shot) => !Object.prototype.hasOwnProperty.call(shot, 'groupId')));
+    assert.equal(saved.rundown.days[0].items[0].shotUnitId, sharedId);
+    assert.equal(saved.rundown.days[0].items[1].shotUnitId, scheduledAlternateId);
+    assert.equal(saved.rundown.days[0].items[2].shotUnitId, existingSingleIdGroup);
+  });
+});
+
+test('uses repeated shotUnitId values as the only grouping source', async () => {
+  await withServer(async (baseUrl) => {
+    const admin = await login(baseUrl);
+    const created = await (await api(baseUrl, admin, '/api/projects', {
+      method: 'POST', body: { name: 'Single id grouping' }
+    })).json();
+    const lock = await (await api(baseUrl, admin, `/api/projects/${created.id}/lock`, {
+      method: 'POST', body: {}
+    })).json();
+    const sharedId = 'shot-unit-shared-group';
+    const oversizedId = 'shot-unit-oversized-group';
+    const crossSceneId = 'shot-unit-cross-scene-group';
+    const response = await api(baseUrl, admin, `/api/projects/${created.id}`, {
+      method: 'PUT',
+      headers: { 'X-Edit-Lease': lock.leaseToken },
+      body: {
+        baseVersion: created.version,
+        shots: [
+          { shotUnitId: 'shot-unit-independent', action: '独立镜头' },
+          { shotUnitId: sharedId, action: '编组镜头一' },
+          { shotUnitId: sharedId, action: '编组镜头二' },
+          { action: '缺少 ID 的独立镜头' },
+          { shotUnitId: 'invalid id', action: '非法 ID 的独立镜头' },
+          { shotUnitId: oversizedId, action: '超量编组一' },
+          { shotUnitId: oversizedId, action: '超量编组二' },
+          { shotUnitId: oversizedId, action: '超量编组三' },
+          { shotUnitId: oversizedId, action: '超量编组四' },
+          { shotUnitId: crossSceneId, action: '跨场编组一' },
+          { type: 'scene-divider', label: '第二场' },
+          { shotUnitId: crossSceneId, action: '跨场编组二' }
+        ],
+        rundown: {
+          version: 1,
+          days: [{
+            id: 'day-1', date: '2026-08-18',
+            items: [
+              { id: 'item-1', type: 'shot', shotUnitId: sharedId, startTime: '09:00', endTime: '10:00', setupLabel: '' },
+              { id: 'item-2', type: 'shot', shotUnitId: oversizedId, startTime: '10:00', endTime: '11:00', setupLabel: '' },
+              { id: 'item-3', type: 'shot', shotUnitId: crossSceneId, startTime: '11:00', endTime: '12:00', setupLabel: '' }
+            ]
+          }]
+        }
+      }
+    });
+    assert.equal(response.status, 200, await response.clone().text());
+    const saved = await response.json();
+    assert.equal(saved.shots[1].shotUnitId, sharedId);
+    assert.equal(saved.shots[2].shotUnitId, sharedId);
+    assert.notEqual(saved.shots[0].shotUnitId, sharedId);
+    assert.ok(saved.shots[3].shotUnitId);
+    assert.ok(saved.shots[4].shotUnitId);
+    assert.notEqual(saved.shots[3].shotUnitId, saved.shots[4].shotUnitId);
+    assert.equal(saved.shots[5].shotUnitId, oversizedId);
+    assert.ok(saved.shots.slice(6, 9).every((shot) => shot.shotUnitId !== oversizedId));
+    assert.equal(new Set(saved.shots.slice(5, 9).map((shot) => shot.shotUnitId)).size, 4);
+    assert.equal(saved.shots[9].shotUnitId, crossSceneId);
+    assert.notEqual(saved.shots[11].shotUnitId, crossSceneId);
+    assert.ok(saved.shots.every((shot) => !Object.prototype.hasOwnProperty.call(shot, 'groupId')));
+    assert.deepEqual(saved.rundown.days[0].items.map((item) => item.shotUnitId), [sharedId, oversizedId, crossSceneId]);
+
+    const duplicated = await (await api(baseUrl, admin, '/api/projects', {
+      method: 'POST', body: { name: 'Single id grouping copy', sourceProjectId: created.id }
+    })).json();
+    assert.equal(duplicated.shots[1].shotUnitId, sharedId);
+    assert.equal(duplicated.shots[2].shotUnitId, sharedId);
+    assert.equal(duplicated.rundown.days[0].items[0].shotUnitId, sharedId);
+    assert.ok(duplicated.shots.every((shot) => !Object.prototype.hasOwnProperty.call(shot, 'groupId')));
   });
 });
 
@@ -646,7 +773,7 @@ test('migrates v4 project presence to per-browser-tab records', async () => {
     assert.deepEqual((await (await api(baseUrl, admin, '/api/admin/project-presence')).json()).userIds, [admin.user.id]);
 
     const db = openDatabase(databasePath);
-    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 6);
+    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 8);
     assert.ok(db.prepare('PRAGMA table_info(project_presence)').all().some((column) => column.name === 'presence_id'));
     db.close();
   }, async (databasePath) => {
@@ -666,6 +793,8 @@ test('migrates v4 project presence to per-browser-tab records', async () => {
       CREATE INDEX project_presence_expiry_idx ON project_presence(expires_at);
       DELETE FROM schema_migrations WHERE version = 5;
       DELETE FROM schema_migrations WHERE version = 6;
+      DELETE FROM schema_migrations WHERE version = 7;
+      DELETE FROM schema_migrations WHERE version = 8;
       ALTER TABLE projects DROP COLUMN rundown_json;
       PRAGMA user_version = 4;
     `);
@@ -688,7 +817,7 @@ test('automatically migrates v1 share links, trims history and resets project nu
     assert.equal((await fetch(`${baseUrl}/share/${links[0].token}`)).status, 200);
 
     const db = openDatabase(databasePath);
-    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 6);
+    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 8);
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
     db.close();
   }, async (databasePath) => {
@@ -704,6 +833,8 @@ test('automatically migrates v1 share links, trims history and resets project nu
       DELETE FROM schema_migrations WHERE version = 4;
       DELETE FROM schema_migrations WHERE version = 5;
       DELETE FROM schema_migrations WHERE version = 6;
+      DELETE FROM schema_migrations WHERE version = 7;
+      DELETE FROM schema_migrations WHERE version = 8;
       ALTER TABLE projects DROP COLUMN rundown_json;
       DROP TABLE project_presence;
       PRAGMA user_version = 1;
@@ -727,7 +858,7 @@ test('migrates legacy gray shot headers to the writing area background', async (
     assert.equal(project.shots[0].headerColor, '#fffdf8');
 
     const db = openDatabase(databasePath);
-    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 6);
+    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 8);
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 3').get().count, 1);
     db.close();
   }, async (databasePath) => {
@@ -744,6 +875,8 @@ test('migrates legacy gray shot headers to the writing area background', async (
     db.prepare('DELETE FROM schema_migrations WHERE version = 4').run();
     db.prepare('DELETE FROM schema_migrations WHERE version = 5').run();
     db.prepare('DELETE FROM schema_migrations WHERE version = 6').run();
+    db.prepare('DELETE FROM schema_migrations WHERE version = 7').run();
+    db.prepare('DELETE FROM schema_migrations WHERE version = 8').run();
     db.exec('ALTER TABLE projects DROP COLUMN rundown_json');
     db.exec('DROP TABLE project_presence');
     db.exec('PRAGMA user_version = 2');
@@ -759,10 +892,11 @@ test('migrates logical shot ids and keeps grouped cards as one rundown unit', as
     assert.equal(project.shots[0].shotUnitId, project.shots[1].shotUnitId);
     assert.ok(project.shots[2].shotUnitId);
     assert.notEqual(project.shots[0].shotUnitId, project.shots[2].shotUnitId);
+    assert.ok(project.shots.every((shot) => !Object.prototype.hasOwnProperty.call(shot, 'groupId')));
     assert.deepEqual(project.rundown, { version: 1, days: [] });
 
     const db = openDatabase(databasePath);
-    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 6);
+    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 8);
     assert.ok(db.prepare('PRAGMA table_info(projects)').all().some((column) => column.name === 'rundown_json'));
     db.close();
   }, async (databasePath) => {
@@ -777,8 +911,135 @@ test('migrates logical shot ids and keeps grouped cards as one rundown unit', as
     db.prepare("INSERT INTO project_members (project_id, user_id, role, created_by_user_id, created_at, updated_at) VALUES (?, ?, 'owner', ?, ?, ?)")
       .run(Number(result.lastInsertRowid), adminId, adminId, Date.now(), Date.now());
     db.prepare('DELETE FROM schema_migrations WHERE version = 6').run();
+    db.prepare('DELETE FROM schema_migrations WHERE version = 7').run();
+    db.prepare('DELETE FROM schema_migrations WHERE version = 8').run();
     db.exec('ALTER TABLE projects DROP COLUMN rundown_json');
     db.exec('PRAGMA user_version = 5');
+    db.close();
+  });
+});
+
+test('repairs v6 logical id conflicts and removes groupId while preserving the grouped rundown schedule', async () => {
+  const sharedId = 'shot-unit-existing-rundown';
+  const scheduledAlternateId = 'shot-unit-scheduled-alternate';
+  const rundownJson = JSON.stringify({
+    version: 1,
+    days: [{
+      id: 'day-1', date: '2026-08-18',
+      items: [
+        { id: 'item-1', type: 'shot', shotUnitId: sharedId, startTime: '09:00', endTime: '10:00', setupLabel: '原排期' },
+        { id: 'item-2', type: 'shot', shotUnitId: scheduledAlternateId, startTime: '10:00', endTime: '11:00', setupLabel: '历史排期' }
+      ]
+    }]
+  });
+  await withServer(async (baseUrl, databasePath) => {
+    const admin = await login(baseUrl);
+    const project = await (await api(baseUrl, admin, '/api/projects/1')).json();
+    assert.notEqual(project.shots[0].shotUnitId, sharedId);
+    assert.equal(project.shots[1].shotUnitId, sharedId);
+    assert.equal(project.shots[2].shotUnitId, sharedId);
+    assert.equal(project.shots[3].shotUnitId, sharedId);
+    assert.equal(project.shots[4].shotUnitId, scheduledAlternateId);
+    assert.equal(project.shots[5].shotUnitId, scheduledAlternateId);
+    assert.ok(project.shots.every((shot) => !Object.prototype.hasOwnProperty.call(shot, 'groupId')));
+    assert.equal(project.rundown.days[0].items[0].shotUnitId, sharedId);
+    assert.equal(project.rundown.days[0].items[1].shotUnitId, scheduledAlternateId);
+
+    const db = openDatabase(databasePath);
+    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 8);
+    assert.equal(db.prepare('SELECT rundown_json FROM projects WHERE id = 1').get().rundown_json, rundownJson);
+    db.close();
+    const backupFiles = readdirSync(path.join(path.dirname(databasePath), 'backups'));
+    const backup = backupFiles.find((name) => name.startsWith('storyboard-v6-') && name.endsWith('.db'));
+    assert.ok(backup);
+    assert.ok(backupFiles.includes(`${backup}.sha256`));
+  }, async (databasePath) => {
+    await initialize(databasePath);
+    const db = openDatabase(databasePath);
+    const result = db.prepare('INSERT INTO projects (name, shots_json, rundown_json) VALUES (?, ?, ?)').run(
+      'Conflicting v6 grouping',
+      JSON.stringify([
+        { shotUnitId: sharedId, action: '拆出的独立镜头' },
+        { shotUnitId: sharedId, groupId: 'group-a', action: '编组镜头一' },
+        { shotUnitId: sharedId, groupId: 'group-a', action: '编组镜头二' },
+        { shotUnitId: sharedId, groupId: 'group-a', action: '编组镜头三' },
+        { shotUnitId: 'shot-unit-unscheduled-first', groupId: 'mixed-id-group', action: '历史 ID 一' },
+        { shotUnitId: scheduledAlternateId, groupId: 'mixed-id-group', action: '历史 ID 二' }
+      ]),
+      rundownJson
+    );
+    const adminId = Number(db.prepare("SELECT id FROM users WHERE username = 'admin'").get().id);
+    db.prepare("INSERT INTO project_members (project_id, user_id, role, created_by_user_id, created_at, updated_at) VALUES (?, ?, 'owner', ?, ?, ?)")
+      .run(Number(result.lastInsertRowid), adminId, adminId, Date.now(), Date.now());
+    db.prepare('DELETE FROM schema_migrations WHERE version = 7').run();
+    db.prepare('DELETE FROM schema_migrations WHERE version = 8').run();
+    db.exec('PRAGMA user_version = 6');
+    db.close();
+  });
+});
+
+test('migrates v7 groups to repeated shotUnitId values without rewriting Rundown', async () => {
+  const firstGroupId = 'shot-unit-v7-group-a';
+  const independentId = 'shot-unit-v7-independent';
+  const earlySingleIdGroup = 'shot-unit-v7-without-group-id';
+  const secondGroupId = 'shot-unit-v7-group-b';
+  const rundownJson = JSON.stringify({
+    version: 1,
+    days: [{
+      id: 'day-1', date: '2026-08-18',
+      items: [
+        { id: 'item-1', type: 'shot', shotUnitId: firstGroupId, startTime: '09:00', endTime: '10:00', setupLabel: '编组排期' },
+        { id: 'item-2', type: 'shot', shotUnitId: independentId, startTime: '10:00', endTime: '11:00', setupLabel: '独立排期' }
+      ]
+    }]
+  });
+  await withServer(async (baseUrl, databasePath) => {
+    const admin = await login(baseUrl);
+    const project = await (await api(baseUrl, admin, '/api/projects/1')).json();
+    assert.equal(project.shots[0].shotUnitId, firstGroupId);
+    assert.equal(project.shots[1].shotUnitId, firstGroupId);
+    assert.equal(project.shots[2].shotUnitId, independentId);
+    assert.equal(project.shots[3].shotUnitId, earlySingleIdGroup);
+    assert.equal(project.shots[4].shotUnitId, earlySingleIdGroup);
+    assert.equal(project.shots[6].shotUnitId, secondGroupId);
+    assert.equal(project.shots[7].shotUnitId, secondGroupId);
+    assert.equal(project.shots[8].shotUnitId, secondGroupId);
+    assert.ok(project.shots.every((shot) => !Object.prototype.hasOwnProperty.call(shot, 'groupId')));
+    assert.deepEqual(project.rundown.days[0].items.map((item) => item.shotUnitId), [firstGroupId, independentId]);
+
+    const db = openDatabase(databasePath);
+    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 8);
+    assert.equal(db.prepare('SELECT rundown_json FROM projects WHERE id = 1').get().rundown_json, rundownJson);
+    const rawShots = JSON.parse(db.prepare('SELECT shots_json FROM projects WHERE id = 1').get().shots_json);
+    assert.ok(rawShots.every((shot) => !Object.prototype.hasOwnProperty.call(shot, 'groupId')));
+    db.close();
+    const backupFiles = readdirSync(path.join(path.dirname(databasePath), 'backups'));
+    const backup = backupFiles.find((name) => name.startsWith('storyboard-v7-') && name.endsWith('.db'));
+    assert.ok(backup);
+    assert.ok(backupFiles.includes(`${backup}.sha256`));
+  }, async (databasePath) => {
+    await initialize(databasePath);
+    const db = openDatabase(databasePath);
+    const result = db.prepare('INSERT INTO projects (name, shots_json, rundown_json) VALUES (?, ?, ?)').run(
+      'V7 grouped project',
+      JSON.stringify([
+        { shotUnitId: firstGroupId, groupId: 'legacy-group-a', action: '组 A 一' },
+        { shotUnitId: firstGroupId, groupId: 'legacy-group-a', action: '组 A 二' },
+        { shotUnitId: independentId, action: '独立镜头' },
+        { shotUnitId: earlySingleIdGroup, action: '无旧字段编组一' },
+        { shotUnitId: earlySingleIdGroup, action: '无旧字段编组二' },
+        { type: 'scene-divider', label: '第二场', groupId: 'unexpected-divider-group' },
+        { shotUnitId: secondGroupId, groupId: 'legacy-group-b', action: '组 B 一' },
+        { shotUnitId: secondGroupId, groupId: 'legacy-group-b', action: '组 B 二' },
+        { shotUnitId: secondGroupId, groupId: 'legacy-group-b', action: '组 B 三' }
+      ]),
+      rundownJson
+    );
+    const adminId = Number(db.prepare("SELECT id FROM users WHERE username = 'admin'").get().id);
+    db.prepare("INSERT INTO project_members (project_id, user_id, role, created_by_user_id, created_at, updated_at) VALUES (?, ?, 'owner', ?, ?, ?)")
+      .run(Number(result.lastInsertRowid), adminId, adminId, Date.now(), Date.now());
+    db.prepare('DELETE FROM schema_migrations WHERE version = 8').run();
+    db.exec('PRAGMA user_version = 7');
     db.close();
   });
 });
@@ -791,7 +1052,7 @@ test('migrates an isolated v0 database without changing project or image bytes',
     assert.equal((await projectsResponse.json()).length, 4);
     assert.ok(readFileSync(databasePath).length > 0);
     const db = openDatabase(databasePath);
-    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 6);
+    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 8);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM project_members WHERE role = 'owner'").get().count, 4);
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
     db.close();
