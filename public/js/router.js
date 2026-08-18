@@ -15,10 +15,11 @@ function buildRouteUrl(route) {
     const params = new URLSearchParams(window.location.search);
     params.delete('view');
     params.delete('project');
+    if (route.view === 'rundown') params.set('view', 'rundown');
 
     const query = params.toString();
     const projectId = normalizeProjectId(route.projectId);
-    const pathname = route.view === 'editor' && projectId
+    const pathname = ['editor', 'rundown'].includes(route.view) && projectId
         ? `/project/${projectId}`
         : '/';
     return `${pathname}${query ? `?${query}` : ''}${window.location.hash}`;
@@ -27,10 +28,10 @@ function buildRouteUrl(route) {
 function createHistoryState(route) {
     const state = {
         app: HISTORY_STATE_APP,
-        view: route.view === 'editor' ? 'editor' : 'home'
+        view: ['editor', 'rundown'].includes(route.view) ? route.view : 'home'
     };
     const projectId = normalizeProjectId(route.projectId);
-    if (state.view === 'editor' && projectId) {
+    if (['editor', 'rundown'].includes(state.view) && projectId) {
         state.projectId = projectId;
     }
     return state;
@@ -41,10 +42,10 @@ export function resolveRouteFromHistoryState(state) {
         return null;
     }
 
-    if (state.view === 'editor') {
+    if (['editor', 'rundown'].includes(state.view)) {
         const projectId = normalizeProjectId(state.projectId);
         if (projectId) {
-            return { view: 'editor', projectId };
+            return { view: state.view, projectId };
         }
     }
 
@@ -55,18 +56,19 @@ export function resolveRouteFromLocation() {
     const projectPathMatch = window.location.pathname.match(PROJECT_PATH_PATTERN);
     if (projectPathMatch) {
         const projectId = normalizeProjectId(projectPathMatch[1]);
-        return projectId ? { view: 'editor', projectId } : { view: 'home' };
+        const view = new URLSearchParams(window.location.search).get('view') === 'rundown' ? 'rundown' : 'editor';
+        return projectId ? { view, projectId } : { view: 'home' };
     }
 
     return { view: 'home' };
 }
 
 export function syncBrowserHistory(route, replaceHistory = false) {
-    const targetRoute = route && route.view === 'editor'
-        ? { view: 'editor', projectId: normalizeProjectId(route.projectId) }
+    const targetRoute = route && ['editor', 'rundown'].includes(route.view)
+        ? { view: route.view, projectId: normalizeProjectId(route.projectId) }
         : { view: 'home' };
 
-    if (targetRoute.view === 'editor' && !targetRoute.projectId) {
+    if (['editor', 'rundown'].includes(targetRoute.view) && !targetRoute.projectId) {
         return;
     }
 

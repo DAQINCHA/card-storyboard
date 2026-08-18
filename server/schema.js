@@ -3,18 +3,20 @@ const { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync,
 const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 const MIGRATIONS = Object.freeze({
   1: 'accounts-sharing-and-edit-locks',
   2: 'project-scoped-reusable-share-links',
   3: 'writing-area-default-scene-header-colors',
   4: 'project-presence-heartbeats',
-  5: 'project-presence-per-browser-tab'
+  5: 'project-presence-per-browser-tab',
+  6: 'project-rundown-and-logical-shot-ids'
 });
 const MIGRATION_NAME = MIGRATIONS[SCHEMA_VERSION];
 const MIGRATION_CHECKSUM = crypto.createHash('sha256').update(MIGRATION_NAME).digest('hex');
 const LEGACY_DEFAULT_SCENE_HEADER_COLOR = '#64748b';
 const DEFAULT_SCENE_HEADER_COLOR = '#fffdf8';
+const EMPTY_RUNDOWN_JSON = JSON.stringify({ version: 1, days: [] });
 
 function migrationChecksum(version) {
   return crypto.createHash('sha256').update(MIGRATIONS[version]).digest('hex');
@@ -63,7 +65,8 @@ function hasColumn(db, table, column) {
 function collectDataFingerprint(db) {
   const projectHash = crypto.createHash('sha256');
   const imageHash = crypto.createHash('sha256');
-  const projects = db.prepare('SELECT id, name, scene, aspect_ratio, shots_json, updated_at FROM projects ORDER BY id').all();
+  const rundownColumn = hasColumn(db, 'projects', 'rundown_json') ? ', rundown_json' : '';
+  const projects = db.prepare(`SELECT id, name, scene, aspect_ratio, shots_json, updated_at${rundownColumn} FROM projects ORDER BY id`).all();
   const images = db.prepare('SELECT project_id, image_id, mime_type, image_data, updated_at FROM project_images ORDER BY project_id, image_id').all();
   projects.forEach((row) => projectHash.update(JSON.stringify(row)));
   images.forEach((row) => {
@@ -289,18 +292,82 @@ function createVersionFiveSchema(db) {
   `);
 }
 
+function migrateLogicalShotIds(shotsJson) {
+  let shots;
+  try {
+    shots = JSON.parse(shotsJson || '[]');
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(shots)) return null;
+
+  let changed = false;
+  const groupIds = new Map();
+  const usedUngroupedIds = new Set();
+  const migratedShots = shots.map((shot) => {
+    if (!shot || typeof shot !== 'object' || Array.isArray(shot) || shot.type === 'scene-divider') return shot;
+    const groupId = typeof shot.groupId === 'string' ? shot.groupId.trim() : '';
+    const savedId = typeof shot.shotUnitId === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(shot.shotUnitId.trim())
+      ? shot.shotUnitId.trim()
+      : '';
+    let shotUnitId = savedId;
+    if (groupId) {
+      if (groupIds.has(groupId)) {
+        shotUnitId = groupIds.get(groupId);
+      } else {
+        shotUnitId = shotUnitId || crypto.randomUUID();
+        groupIds.set(groupId, shotUnitId);
+      }
+    } else if (!shotUnitId || usedUngroupedIds.has(shotUnitId)) {
+      shotUnitId = crypto.randomUUID();
+    }
+    usedUngroupedIds.add(shotUnitId);
+    if (shot.shotUnitId === shotUnitId) return shot;
+    changed = true;
+    return { ...shot, shotUnitId };
+  });
+  return changed ? JSON.stringify(migratedShots) : null;
+}
+
+function createVersionSixSchema(db) {
+  if (!hasColumn(db, 'projects', 'rundown_json')) {
+    db.exec(`ALTER TABLE projects ADD COLUMN rundown_json TEXT NOT NULL DEFAULT '${EMPTY_RUNDOWN_JSON.replaceAll("'", "''")}'`);
+  }
+  const updateProject = db.prepare('UPDATE projects SET shots_json = ? WHERE id = ?');
+  db.prepare('SELECT id, shots_json FROM projects').all().forEach((project) => {
+    const migratedShotsJson = migrateLogicalShotIds(project.shots_json);
+    if (migratedShotsJson !== null) updateProject.run(migratedShotsJson, project.id);
+  });
+}
+
 function collectProjectRows(db) {
-  return db.prepare('SELECT id, name, scene, aspect_ratio, shots_json, updated_at FROM projects ORDER BY id').all();
+  const rundownColumn = hasColumn(db, 'projects', 'rundown_json') ? ', rundown_json' : '';
+  return db.prepare(`SELECT id, name, scene, aspect_ratio, shots_json, updated_at${rundownColumn} FROM projects ORDER BY id`).all();
 }
 
 function assertExpectedProjectData(db, beforeProjects) {
-  const expectedProjects = beforeProjects.map((project) => ({
-    ...project,
-    shots_json: migrateSceneHeaderColors(project.shots_json) || project.shots_json
-  }));
   const actualProjects = collectProjectRows(db);
-  if (JSON.stringify(expectedProjects) !== JSON.stringify(actualProjects)) {
-    throw new Error('Existing project data changed unexpectedly during migration');
+  if (actualProjects.length !== beforeProjects.length) throw new Error('Existing project data changed unexpectedly during migration');
+  for (let index = 0; index < beforeProjects.length; index += 1) {
+    const before = beforeProjects[index];
+    const actual = actualProjects[index];
+    for (const field of ['id', 'name', 'scene', 'aspect_ratio', 'updated_at']) {
+      if (before[field] !== actual[field]) throw new Error('Existing project data changed unexpectedly during migration');
+    }
+    const expectedShots = JSON.parse(migrateSceneHeaderColors(before.shots_json) || before.shots_json || '[]');
+    const actualShots = JSON.parse(actual.shots_json || '[]');
+    const withoutLogicalIds = actualShots.map((shot) => {
+      if (!shot || typeof shot !== 'object' || Array.isArray(shot)) return shot;
+      const copy = { ...shot };
+      delete copy.shotUnitId;
+      return copy;
+    });
+    if (JSON.stringify(expectedShots) !== JSON.stringify(withoutLogicalIds)) {
+      throw new Error('Existing project data changed unexpectedly during migration');
+    }
+    if ('rundown_json' in actual && actual.rundown_json !== EMPTY_RUNDOWN_JSON) {
+      throw new Error('Existing project rundown was not initialized safely');
+    }
   }
 }
 
@@ -334,7 +401,7 @@ function migrateDatabase(databasePath) {
     }
     return { migrated: false, backup: null };
   }
-  if (![1, 2, 3, 4].includes(version)) {
+  if (![1, 2, 3, 4, 5].includes(version)) {
     db.close();
     const direction = version < 1 ? 'setup-admin or migration is required' : 'database is newer than this application';
     throw new Error(`Unsupported database schema version ${version}; ${direction}`);
@@ -365,6 +432,7 @@ function migrateDatabase(databasePath) {
       if (nextVersion === 3) createVersionThreeSchema(db);
       if (nextVersion === 4) createVersionFourSchema(db);
       if (nextVersion === 5) createVersionFiveSchema(db);
+      if (nextVersion === 6) createVersionSixSchema(db);
       db.prepare('INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)')
         .run(nextVersion, MIGRATIONS[nextVersion], migrationChecksum(nextVersion), Date.now());
       db.exec(`PRAGMA user_version = ${nextVersion}`);
@@ -434,6 +502,9 @@ function setupDatabase({ databasePath, username, displayName, passwordHash, must
     createVersionFiveSchema(db);
     db.prepare('INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)')
       .run(5, MIGRATIONS[5], migrationChecksum(5), now);
+    createVersionSixSchema(db);
+    db.prepare('INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)')
+      .run(6, MIGRATIONS[6], migrationChecksum(6), now);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     const after = collectDataFingerprint(db);
     assertExpectedProjectData(db, beforeProjects);

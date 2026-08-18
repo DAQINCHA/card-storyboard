@@ -36,6 +36,7 @@ import {
     resolveRouteFromLocation,
     syncBrowserHistory
 } from './js/router.js';
+import { createRundownController } from './js/rundown.js';
 
 const ACCESS_ROLE_LABELS = Object.freeze({
     anonymous: '只读',
@@ -67,6 +68,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     const appUser = accessContext.user || null;
     const homeView = document.getElementById('home-view');
     const editorView = document.getElementById('editor-view');
+    const rundownView = document.getElementById('rundown-view');
+    const rundownPrintRoot = document.getElementById('rundown-print-root');
     const projectsGrid = document.getElementById('projects-grid');
     const projectSortSelect = document.getElementById('project-sort');
     const projectSearchInput = document.getElementById('project-search');
@@ -78,6 +81,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     const addDropdownToggle = document.getElementById('add-dropdown-toggle');
     const addDropdownMenu = document.getElementById('add-dropdown-menu');
     const exportPdfBtn = document.getElementById('export-pdf-btn');
+    const exportDropdownToggle = document.getElementById('export-dropdown-toggle');
+    const exportDropdownMenu = document.getElementById('export-dropdown-menu');
+    const openRundownBtn = document.getElementById('open-rundown-btn');
     const multiSelectToggleBtn = document.getElementById('multi-select-toggle-btn');
     const backToHomeBtn = document.getElementById('back-to-home-btn');
     const aspectRatioSelect = document.getElementById('aspect-ratio-select');
@@ -146,6 +152,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let projectsCache = [];
     let currentProjectId = null;
     let currentProject = null;
+    let currentRundown = { version: 1, days: [] };
     let currentProjectVersion = null;
     let currentCapabilities = {};
     let editLeaseToken = '';
@@ -196,6 +203,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     let lastTextColorPointer = null;
     let clipboardToastHideTimer = null;
 
+    const rundownController = createRundownController({
+        view: rundownView,
+        printRoot: rundownPrintRoot,
+        onBack: () => returnToStoryboardFromRundown(),
+        onChange: (nextRundown) => {
+            currentRundown = nextRundown;
+            scheduleSaveState();
+        }
+    });
+
     function loadCollapsedAdminGroups() {
         try {
             const value = JSON.parse(localStorage.getItem(ADMIN_PROJECT_GROUPS_KEY) || '{}');
@@ -217,6 +234,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     function setSaveStatusState(state) {
         saveStatusState = state;
         renderSaveStatus();
+        rundownController.setSaveState(state);
     }
 
     function setLockBanner(message = '', options = {}) {
@@ -335,6 +353,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             setMultiSelectMode(false);
         }
         editorView.classList.toggle('is-readonly', editorReadOnly);
+        rundownController.setReadOnly(editorReadOnly);
         if (projectInput) projectInput.readOnly = editorReadOnly;
         if (aspectRatioSelect) aspectRatioSelect.disabled = editorReadOnly;
         [addShotBtn, addDropdownToggle, multiSelectToggleBtn].forEach((button) => { if (button) button.disabled = editorReadOnly; });
@@ -535,6 +554,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         setMultiSelectMode(false);
         homeView.classList.remove('hidden');
         editorView.classList.add('hidden');
+        rundownView.classList.add('hidden');
         sessionStorage.setItem(VIEW_STORAGE_KEY, 'home');
         sessionStorage.removeItem(PROJECT_STORAGE_KEY);
         if (syncHistory) {
@@ -547,6 +567,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         clearPreloadViewClasses();
         homeView.classList.add('hidden');
         editorView.classList.remove('hidden');
+        rundownView.classList.add('hidden');
         sessionStorage.setItem(VIEW_STORAGE_KEY, 'editor');
         if (currentProjectId) {
             sessionStorage.setItem(PROJECT_STORAGE_KEY, String(currentProjectId));
@@ -557,6 +578,48 @@ document.addEventListener('DOMContentLoaded', async () => {
         scheduleSyncProjectHeaderWidth(true);
         scheduleSyncSceneHeaderInputByViewport();
         scheduleSyncShotGroupFrames();
+    }
+
+    function syncShareViewHistory(viewName, replaceHistory = false) {
+        if (!isShareMode) return;
+        const params = new URLSearchParams(window.location.search);
+        if (viewName === 'rundown') params.set('view', 'rundown');
+        else params.delete('view');
+        const nextUrl = `${window.location.pathname}${params.toString() ? `?${params}` : ''}${window.location.hash}`;
+        const method = replaceHistory ? 'replaceState' : 'pushState';
+        window.history[method]({ app: 'storyboard-share', view: viewName }, '', nextUrl);
+    }
+
+    function switchToRundown(options = {}) {
+        const { syncHistory = true, replaceHistory = false } = options;
+        clearPreloadViewClasses();
+        setMultiSelectMode(false);
+        homeView.classList.add('hidden');
+        editorView.classList.add('hidden');
+        rundownView.classList.remove('hidden');
+        sessionStorage.setItem(VIEW_STORAGE_KEY, 'rundown');
+        if (syncHistory) {
+            if (isShareMode) syncShareViewHistory('rundown', replaceHistory);
+            else syncBrowserHistory({ view: 'rundown', projectId: currentProjectId }, replaceHistory);
+        }
+    }
+
+    async function openRundownView(options = {}) {
+        const { syncHistory = true, replaceHistory = false, flushSave = true } = options;
+        if (!currentProject) return false;
+        if (flushSave && !await flushPendingSave()) {
+            window.alert('当前分镜尚未保存，暂时无法进入 Rundown。');
+            return false;
+        }
+        const projectForRundown = { ...currentProject, rundown: currentRundown };
+        rundownController.open(projectForRundown, { readOnly: editorReadOnly });
+        switchToRundown({ syncHistory, replaceHistory });
+        return true;
+    }
+
+    function returnToStoryboardFromRundown() {
+        switchToEditor({ syncHistory: !isShareMode, replaceHistory: false });
+        if (isShareMode) syncShareViewHistory('editor', false);
     }
 
     function scheduleSyncProjectHeaderWidth(runDouble = false) {
@@ -1533,6 +1596,33 @@ document.addEventListener('DOMContentLoaded', async () => {
         return `shot-group-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     }
 
+    function createShotUnitId() {
+        if (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
+            return `shot-unit-${globalThis.crypto.randomUUID()}`;
+        }
+        return `shot-unit-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    }
+
+    function reconcileShotUnitIds() {
+        const groupUnitIds = new Map();
+        const usedUngroupedIds = new Set();
+        storyboardGrid.querySelectorAll('.shot-card').forEach((card) => {
+            const groupId = normalizeShotGroupId(card.dataset.shotGroupId);
+            let shotUnitId = String(card.dataset.shotUnitId || '').trim();
+            if (groupId) {
+                if (groupUnitIds.has(groupId)) shotUnitId = groupUnitIds.get(groupId);
+                else {
+                    shotUnitId = shotUnitId || createShotUnitId();
+                    groupUnitIds.set(groupId, shotUnitId);
+                }
+            } else if (!shotUnitId || usedUngroupedIds.has(shotUnitId)) {
+                shotUnitId = createShotUnitId();
+            }
+            usedUngroupedIds.add(shotUnitId);
+            card.dataset.shotUnitId = shotUnitId;
+        });
+    }
+
     function groupSelectedShots() {
         if (editorReadOnly) {
             return;
@@ -1549,8 +1639,29 @@ document.addEventListener('DOMContentLoaded', async () => {
             window.alert('请选择同一场内连续的卡片进行打组。');
             return;
         }
+        const scheduledIds = new Set((currentRundown.days || []).flatMap((day) => day.items || [])
+            .filter((item) => item.type === 'shot')
+            .map((item) => item.shotUnitId));
+        const selectedUnitIds = [...new Set(selectedCards.map((card) => card.dataset.shotUnitId).filter(Boolean))];
+        const scheduledSelectedIds = selectedUnitIds.filter((id) => scheduledIds.has(id));
+        if (scheduledSelectedIds.length > 1 && !window.confirm('所选镜头中有多个已经排入 Rundown。打组后只保留拍摄顺序最早的一项，是否继续？')) {
+            return;
+        }
+        const orderedScheduledItems = [...(currentRundown.days || [])]
+            .sort((left, right) => String(left.date || '').localeCompare(String(right.date || '')))
+            .flatMap((day) => day.items || []);
+        const keptScheduledId = orderedScheduledItems.find((item) => scheduledSelectedIds.includes(item.shotUnitId))?.shotUnitId;
+        const shotUnitId = keptScheduledId || selectedCards[0].dataset.shotUnitId || createShotUnitId();
+        if (scheduledSelectedIds.length > 0) {
+            (currentRundown.days || []).forEach((day) => {
+                day.items = (day.items || []).filter((item) => item.type !== 'shot' || !selectedUnitIds.includes(item.shotUnitId) || item.shotUnitId === keptScheduledId);
+            });
+        }
         const groupId = createShotGroupId();
-        selectedCards.forEach((card) => setShotCardGroup(card, groupId));
+        selectedCards.forEach((card) => {
+            setShotCardGroup(card, groupId);
+            card.dataset.shotUnitId = shotUnitId;
+        });
         cleanupInvalidShotGroups();
         updateShotNumbers();
         scheduleSaveState();
@@ -1566,6 +1677,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
         selectedCards.forEach((card) => setShotCardGroup(card, ''));
+        reconcileShotUnitIds();
         cleanupInvalidShotGroups();
         updateShotNumbers();
         scheduleSaveState();
@@ -2260,6 +2372,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const preview = card.querySelector('.shot-image-preview');
 
         return {
+            shotUnitId: String(card.dataset.shotUnitId || '').trim() || createShotUnitId(),
             groupId: normalizeShotGroupId(card.dataset.shotGroupId),
             headerColor: colorWrapper?.dataset.color || '',
             vfx: Boolean(vfxCheckbox?.checked),
@@ -2295,7 +2408,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 name: projectInput ? projectInput.value : '',
                 scene: sceneInput ? sceneInput.value : '',
                 aspectRatio: aspectRatioSelect ? aspectRatioSelect.value : '16/9',
-                shots
+                shots,
+                rundown: currentRundown
             };
         }, () => perfMeta);
     }
@@ -2387,6 +2501,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
             currentProjectVersion = saved.version;
             currentProject = saved;
+            currentRundown = saved.rundown || { version: 1, days: [] };
+            rundownController.acceptSavedRundown(currentRundown);
             setSaveStatusState('saved');
             perfMeta.savedShots = Array.isArray(saved?.shots) ? saved.shots.length : 0;
             syncSavedImageReferences(payload.shots, saved?.shots, saveProjectId);
@@ -2501,6 +2617,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             perfMeta.cardCount = cards.length;
             perfMeta.insertedLeadingDivider = insertedLeadingDivider;
             cleanupInvalidShotGroups();
+            reconcileShotUnitIds();
             cards.forEach((card) => {
                 const groupId = normalizeShotGroupId(card.dataset.shotGroupId);
                 let shotNumber = nextShotNumber;
@@ -3607,6 +3724,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             currentProject = project;
             currentProjectId = project.id;
             currentProjectVersion = project.version;
+            currentRundown = project.rundown || { version: 1, days: [] };
             currentCapabilities = project.capabilities || {};
             takeoverNoticeShown = false;
             sessionStorage.setItem(PROJECT_STORAGE_KEY, String(project.id));
@@ -3755,6 +3873,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         const clone = template.content.cloneNode(true);
         const card = clone.querySelector('.shot-card');
         const header = clone.querySelector('.shot-header');
+        card.dataset.shotUnitId = typeof shotData?.shotUnitId === 'string' && shotData.shotUnitId.trim()
+            ? shotData.shotUnitId.trim()
+            : createShotUnitId();
 
         const radios = clone.querySelectorAll('input[type="radio"]');
         const uniqueId = `camera-move-${Date.now()}-${shotCount}`;
@@ -4207,7 +4328,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     addDropdownToggle.addEventListener('click', (e) => {
         e.stopPropagation();
         closeAllColorPalettes();
+        exportDropdownMenu.classList.remove('show');
+        exportDropdownToggle.setAttribute('aria-expanded', 'false');
         addDropdownMenu.classList.toggle('show');
+    });
+
+    exportDropdownToggle.addEventListener('click', (event) => {
+        event.stopPropagation();
+        closeAllColorPalettes();
+        addDropdownMenu.classList.remove('show');
+        const expanded = exportDropdownMenu.classList.toggle('show');
+        exportDropdownToggle.setAttribute('aria-expanded', String(expanded));
     });
 
     document.addEventListener('click', (event) => {
@@ -4215,6 +4346,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
         addDropdownMenu.classList.remove('show');
+        exportDropdownMenu.classList.remove('show');
+        exportDropdownToggle.setAttribute('aria-expanded', 'false');
         closeAllColorPalettes();
         if (!event.target.closest('.text-color-floating-palette') && !event.target.closest('.rich-text-input')) {
             hideTextColorPalette();
@@ -4268,6 +4401,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         buildPrintLayout();
         applyExportPdfDocumentTitle();
         window.print();
+    });
+
+    openRundownBtn?.addEventListener('click', () => {
+        exportDropdownMenu.classList.remove('show');
+        exportDropdownToggle.setAttribute('aria-expanded', 'false');
+        openRundownView().catch((error) => {
+            console.error('Open rundown failed:', error);
+            window.alert(error.message || '打开 Rundown 失败。');
+        });
     });
 
     aspectRatioSelect.addEventListener('change', (e) => {
@@ -4353,8 +4495,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         const { syncHistory = true, replaceHistory = false, flushSave = true } = options;
         const normalizedProjectId = normalizeProjectId(route?.projectId);
 
-        if (route?.view === 'editor' && normalizedProjectId) {
-            await openProject(normalizedProjectId, { syncHistory, replaceHistory, flushSave });
+        if (['editor', 'rundown'].includes(route?.view) && normalizedProjectId) {
+            const opened = await openProject(normalizedProjectId, {
+                syncHistory: route.view === 'editor' ? syncHistory : false,
+                replaceHistory,
+                flushSave
+            });
+            if (opened && route.view === 'rundown') {
+                await openRundownView({ syncHistory, replaceHistory, flushSave: false });
+            }
             return;
         }
 
@@ -4388,6 +4537,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     window.addEventListener('popstate', (event) => {
+        if (isShareMode) {
+            const wantsRundown = new URLSearchParams(window.location.search).get('view') === 'rundown';
+            if (wantsRundown) openRundownView({ syncHistory: false, flushSave: false });
+            else switchToEditor({ syncHistory: false });
+            return;
+        }
         const route = resolveRouteFromHistoryState(event.state)
             || resolveRouteFromLocation()
             || { view: 'home' };
@@ -4424,6 +4579,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             switchToEditor({ syncHistory: false });
             setLockBanner('匿名只读分享');
             applyEditorAccess();
+            if (new URLSearchParams(window.location.search).get('view') === 'rundown') {
+                return openRundownView({ syncHistory: false, flushSave: false });
+            }
         })
         : restoreInitialView();
     initialViewPromise.catch((error) => {

@@ -42,6 +42,9 @@ const SESSION_IDLE_MS = 12 * 60 * 60 * 1000;
 const SESSION_ABSOLUTE_MS = 7 * 24 * 60 * 60 * 1000;
 const EDIT_LOCK_MS = 60 * 1000;
 const IMAGE_ID_PATTERN = /^[A-Za-z0-9_-]{1,100}$/;
+const STABLE_ID_PATTERN = /^[A-Za-z0-9_-]{1,100}$/;
+const RUNDOWN_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const RUNDOWN_TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const IMAGE_DATA_URL_PATTERN = /^data:(image\/(?:jpeg|png|webp|gif));base64,([A-Za-z0-9+/=\r\n]+)$/i;
 const MIME_TYPES = new Map([
   ['.css', 'text/css; charset=utf-8'], ['.gif', 'image/gif'], ['.html', 'text/html; charset=utf-8'],
@@ -72,6 +75,87 @@ function safeParseShots(shotsJson) {
 
 function isSceneDividerShot(shot) {
   return Boolean(shot && typeof shot === 'object' && shot.type === 'scene-divider');
+}
+
+function normalizeStableId(value) {
+  const id = String(value || '').trim();
+  return STABLE_ID_PATTERN.test(id) ? id : '';
+}
+
+function parseRundown(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  try {
+    const parsed = JSON.parse(value || '{}');
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function normalizeRundown(value, validShotUnitIds = new Set()) {
+  const source = parseRundown(value);
+  const seenShotUnitIds = new Set();
+  const seenDayIds = new Set();
+  const days = [];
+  const sourceDays = Array.isArray(source.days) ? source.days.slice(0, 500) : [];
+  sourceDays.forEach((sourceDay) => {
+    if (!sourceDay || typeof sourceDay !== 'object' || Array.isArray(sourceDay)) return;
+    let dayId = normalizeStableId(sourceDay.id);
+    if (!dayId || seenDayIds.has(dayId)) dayId = crypto.randomUUID();
+    seenDayIds.add(dayId);
+    const items = [];
+    const seenItemIds = new Set();
+    const sourceItems = Array.isArray(sourceDay.items) ? sourceDay.items.slice(0, 5000) : [];
+    sourceItems.forEach((sourceItem) => {
+      if (!sourceItem || typeof sourceItem !== 'object' || Array.isArray(sourceItem)) return;
+      const type = sourceItem.type === 'event' ? 'event' : 'shot';
+      let itemId = normalizeStableId(sourceItem.id);
+      if (!itemId || seenItemIds.has(itemId)) itemId = crypto.randomUUID();
+      seenItemIds.add(itemId);
+      const base = {
+        id: itemId,
+        type,
+        startTime: RUNDOWN_TIME_PATTERN.test(String(sourceItem.startTime || '')) ? String(sourceItem.startTime) : '',
+        endTime: RUNDOWN_TIME_PATTERN.test(String(sourceItem.endTime || '')) ? String(sourceItem.endTime) : '',
+        setupLabel: String(sourceItem.setupLabel || '').trim().slice(0, 160)
+      };
+      if (type === 'event') {
+        items.push({ ...base, title: String(sourceItem.title || '').trim().slice(0, 240) });
+        return;
+      }
+      const shotUnitId = normalizeStableId(sourceItem.shotUnitId);
+      if (!shotUnitId || !validShotUnitIds.has(shotUnitId) || seenShotUnitIds.has(shotUnitId)) return;
+      seenShotUnitIds.add(shotUnitId);
+      items.push({ ...base, shotUnitId });
+    });
+    days.push({
+      id: dayId,
+      date: RUNDOWN_DATE_PATTERN.test(String(sourceDay.date || '')) ? String(sourceDay.date) : '',
+      items
+    });
+  });
+  return { version: 1, days };
+}
+
+function ensureLogicalShotUnitIds(shots) {
+  const groupIds = new Map();
+  const usedUngroupedIds = new Set();
+  return shots.map((shot) => {
+    if (!shot || typeof shot !== 'object' || Array.isArray(shot) || isSceneDividerShot(shot)) return shot;
+    const groupId = normalizeStableId(shot.groupId);
+    let shotUnitId = normalizeStableId(shot.shotUnitId);
+    if (groupId) {
+      if (groupIds.has(groupId)) shotUnitId = groupIds.get(groupId);
+      else {
+        shotUnitId = shotUnitId || crypto.randomUUID();
+        groupIds.set(groupId, shotUnitId);
+      }
+    } else if (!shotUnitId || usedUngroupedIds.has(shotUnitId)) {
+      shotUnitId = crypto.randomUUID();
+    }
+    usedUngroupedIds.add(shotUnitId);
+    return { ...shot, shotUnitId };
+  });
 }
 
 function normalizeProjectId(value) {
@@ -171,9 +255,12 @@ function toProjectSummary(row, user) {
 
 function toProjectDetail(row, user, { share = false, lock = null } = {}) {
   const role = share ? 'anonymous' : (user?.isAdmin ? 'admin' : row.access_role);
+  const shots = safeParseShots(row.shots_json);
+  const validShotUnitIds = new Set(shots.filter((shot) => !isSceneDividerShot(shot)).map((shot) => normalizeStableId(shot?.shotUnitId)).filter(Boolean));
   return {
     id: row.id, name: row.name, scene: row.scene, aspectRatio: row.aspect_ratio,
-    shots: decorateShotsWithImageUrls(row.id, safeParseShots(row.shots_json), share),
+    shots: decorateShotsWithImageUrls(row.id, shots, share),
+    rundown: normalizeRundown(row.rundown_json, validShotUnitIds),
     updatedAt: row.updated_at, version: row.version, accessRole: role,
     capabilities: share ? {
       canView: true, canEdit: false, canDuplicate: false, canDelete: false,
@@ -218,9 +305,9 @@ function createStoryboardStore(databasePath) {
   const cleanupNow = Date.now();
   db.prepare('DELETE FROM user_sessions WHERE revoked_at IS NOT NULL OR idle_expires_at <= ? OR absolute_expires_at <= ?').run(cleanupNow, cleanupNow);
 
-  const getProjectRowStmt = db.prepare('SELECT id, name, scene, aspect_ratio, shots_json, updated_at, version FROM projects WHERE id = ?');
-  const createProjectStmt = db.prepare("INSERT INTO projects (name, scene, aspect_ratio, shots_json, updated_at, version) VALUES (?, '', '16/9', '[]', strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'), 1)");
-  const updateProjectStmt = db.prepare(`UPDATE projects SET name = ?, scene = ?, aspect_ratio = ?, shots_json = ?, updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'), version = version + 1 WHERE id = ? AND version = ?`);
+  const getProjectRowStmt = db.prepare('SELECT id, name, scene, aspect_ratio, shots_json, rundown_json, updated_at, version FROM projects WHERE id = ?');
+  const createProjectStmt = db.prepare("INSERT INTO projects (name, scene, aspect_ratio, shots_json, rundown_json, updated_at, version) VALUES (?, '', '16/9', '[]', '{\"version\":1,\"days\":[]}', strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'), 1)");
+  const updateProjectStmt = db.prepare(`UPDATE projects SET name = ?, scene = ?, aspect_ratio = ?, shots_json = ?, rundown_json = ?, updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'), version = version + 1 WHERE id = ? AND version = ?`);
   const deleteProjectStmt = db.prepare('DELETE FROM projects WHERE id = ?');
   const getImageStmt = db.prepare('SELECT mime_type, image_data FROM project_images WHERE project_id = ? AND image_id = ?');
   const imageExistsStmt = db.prepare('SELECT 1 FROM project_images WHERE project_id = ? AND image_id = ?');
@@ -302,7 +389,7 @@ function createStoryboardStore(databasePath) {
 
   function getProjectAccess(projectId, user) {
     const row = db.prepare(`
-      SELECT p.id, p.name, p.scene, p.aspect_ratio, p.shots_json, p.updated_at, p.version, pm.role AS access_role
+      SELECT p.id, p.name, p.scene, p.aspect_ratio, p.shots_json, p.rundown_json, p.updated_at, p.version, pm.role AS access_role
       FROM projects p LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = ?
       WHERE p.id = ? AND (? = 1 OR pm.user_id IS NOT NULL)
     `).get(user.id, projectId, user.isAdmin ? 1 : 0);
@@ -365,8 +452,8 @@ function createStoryboardStore(databasePath) {
       db.prepare(`INSERT INTO project_members (project_id, user_id, role, created_by_user_id, created_at, updated_at) VALUES (?, ?, 'owner', ?, ?, ?)`)
         .run(projectId, user.id, user.id, now, now);
       if (source) {
-        db.prepare(`UPDATE projects SET scene = ?, aspect_ratio = ?, shots_json = ?, updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime') WHERE id = ?`)
-          .run(source.scene, source.aspect_ratio, source.shots_json, projectId);
+        db.prepare(`UPDATE projects SET scene = ?, aspect_ratio = ?, shots_json = ?, rundown_json = ?, updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime') WHERE id = ?`)
+          .run(source.scene, source.aspect_ratio, source.shots_json, source.rundown_json, projectId);
         copyImagesStmt.run(projectId, sourceId);
       }
       return getProjectAccess(projectId, user);
@@ -407,7 +494,7 @@ function createStoryboardStore(databasePath) {
     listImageIdsStmt.all(projectId).forEach(({ image_id: imageId }) => {
       if (!referenced.has(imageId)) deleteImageStmt.run(projectId, imageId);
     });
-    return normalized;
+    return ensureLogicalShotUnitIds(normalized);
   }
 
   function getLockRow(projectId) {
@@ -527,7 +614,10 @@ function createStoryboardStore(databasePath) {
       const aspectRatio = String(payload.aspectRatio ?? current.aspect_ratio) || '16/9';
       const shots = Array.isArray(payload.shots) ? payload.shots : safeParseShots(current.shots_json);
       const normalizedShots = normalizeShotsForStorage(projectId, shots);
-      const result = updateProjectStmt.run(name, scene, aspectRatio, JSON.stringify(normalizedShots), projectId, baseVersion);
+      const validShotUnitIds = new Set(normalizedShots.filter((shot) => !isSceneDividerShot(shot)).map((shot) => normalizeStableId(shot?.shotUnitId)).filter(Boolean));
+      const rundownSource = Object.prototype.hasOwnProperty.call(payload, 'rundown') ? payload.rundown : current.rundown_json;
+      const normalizedRundown = normalizeRundown(rundownSource, validShotUnitIds);
+      const result = updateProjectStmt.run(name, scene, aspectRatio, JSON.stringify(normalizedShots), JSON.stringify(normalizedRundown), projectId, baseVersion);
       if (Number(result.changes) !== 1) throw new HttpError(409, 'Project was changed by another editor', 'version_conflict');
       return toProjectDetail(getProjectAccess(projectId, user), user, { lock: publicLock(currentLock(projectId), session.id) });
     });

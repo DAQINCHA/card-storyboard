@@ -155,13 +155,27 @@
                         </div>
                     </div>
 
-                    <button id="export-pdf-btn" class="secondary-btn">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-3 3m0 0l-3-3m3 3V4" stroke="currentColor"
-                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-                        </svg>
-                        导出 PDF
-                    </button>
+                    <div class="add-btn-group export-btn-group">
+                        <button id="export-pdf-btn" class="secondary-btn btn-left">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-3 3m0 0l-3-3m3 3V4" stroke="currentColor"
+                                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                            </svg>
+                            导出 PDF
+                        </button>
+                        <div class="dropdown">
+                            <button class="secondary-btn btn-right" id="export-dropdown-toggle" type="button"
+                                title="更多导出选项" aria-label="更多导出选项" aria-haspopup="menu" aria-expanded="false">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                                    <path d="M6 9L12 15L18 9" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                        stroke-linejoin="round" />
+                                </svg>
+                            </button>
+                            <div class="dropdown-menu export-dropdown-menu" id="export-dropdown-menu" role="menu">
+                                <button id="open-rundown-btn" class="dropdown-item" type="button" role="menuitem">拍摄 Rundown</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </header>
 
@@ -173,6 +187,70 @@
             </main>
         </div>
     </div>
+
+    <div id="rundown-view" class="rundown-view hidden">
+        <header class="rundown-topbar">
+            <div class="rundown-topbar-main">
+                <button id="rundown-back-btn" class="secondary-btn rundown-back-btn" type="button" aria-label="返回分镜" title="返回分镜">←</button>
+                <div>
+                    <p class="rundown-kicker">拍摄计划</p>
+                    <h1 id="rundown-project-title">Rundown</h1>
+                </div>
+            </div>
+            <div class="rundown-topbar-actions">
+                <span id="rundown-save-state" class="rundown-save-state">已保存</span>
+                <button id="rundown-add-day-btn" class="secondary-btn" type="button">添加拍摄日</button>
+                <button id="rundown-export-btn" class="primary-btn" type="button">导出 Rundown PDF</button>
+            </div>
+        </header>
+
+        <div id="rundown-readonly-banner" class="rundown-readonly-banner hidden">当前为只读模式，可查看和导出 Rundown。</div>
+
+        <div class="rundown-workspace">
+            <aside class="rundown-pool-panel">
+                <div class="rundown-panel-heading">
+                    <div>
+                        <p class="rundown-kicker">未安排</p>
+                        <h2>镜头池 <span id="rundown-unscheduled-count">0</span></h2>
+                    </div>
+                </div>
+                <label class="rundown-filter-field">
+                    <span>搜索</span>
+                    <input id="rundown-search" type="search" placeholder="镜号、场次、动作…">
+                </label>
+                <div class="rundown-filter-grid">
+                    <label class="rundown-filter-field">
+                        <span>场次</span>
+                        <select id="rundown-scene-filter"><option value="">全部场次</option></select>
+                    </label>
+                    <label class="rundown-filter-field">
+                        <span>颜色</span>
+                        <select id="rundown-color-filter"><option value="">全部颜色</option></select>
+                    </label>
+                </div>
+                <label class="rundown-filter-field">
+                    <span>快速加入到</span>
+                    <select id="rundown-target-day"><option value="">请先添加拍摄日</option></select>
+                </label>
+                <button id="rundown-add-filtered-btn" class="secondary-btn rundown-wide-btn" type="button">加入当前筛选结果</button>
+                <div id="rundown-shot-pool" class="rundown-shot-pool"></div>
+            </aside>
+
+            <main class="rundown-schedule-panel">
+                <div class="rundown-bulk-toolbar">
+                    <span id="rundown-summary">尚未安排拍摄</span>
+                </div>
+                <div id="rundown-validation-summary" class="rundown-validation-summary hidden" role="status"></div>
+                <div id="rundown-days" class="rundown-days"></div>
+                <div id="rundown-empty" class="rundown-empty">
+                    <h2>先添加一个拍摄日</h2>
+                    <p>再从左侧把镜头拖入日程，或插入集合、布光、午餐等现场事项。</p>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <div id="rundown-print-root" class="rundown-print-root" aria-hidden="true"></div>
 
     <template id="project-card-template">
         <article class="project-card">

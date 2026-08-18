@@ -11,7 +11,7 @@
     "setup-admin": "node server.js setup-admin --username admin",
     "verify-db": "node server.js verify-db",
     "restore-db": "node server.js restore-db",
-    "check": "node --check server.js && node --check server/schema.js && node --check server/security.js && node --check public/script.js && node --check public/js/api.js && node --check public/js/auth.js && node --check public/js/sharing.js && node --check public/js/editable-utils.js && node --check public/js/router.js && node --check public/vendor/sortable-lite.js",
+    "check": "node --check server.js && node --check server/schema.js && node --check server/security.js && node --check public/script.js && node --check public/js/api.js && node --check public/js/auth.js && node --check public/js/sharing.js && node --check public/js/editable-utils.js && node --check public/js/router.js && node --check public/js/rundown.js && node --check public/vendor/sortable-lite.js",
     "test": "node --test"
   }
 }

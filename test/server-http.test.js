@@ -138,7 +138,7 @@ test('serves hardened frontend and health endpoint without leaking the database 
     const healthResponse = await fetch(`${baseUrl}/api/health`);
     assert.equal(healthResponse.status, 200);
     const health = await healthResponse.json();
-    assert.deepEqual(health, { ok: true, service: 'card-storyboard', schemaVersion: 5 });
+    assert.deepEqual(health, { ok: true, service: 'card-storyboard', schemaVersion: 6 });
     assert.equal(healthResponse.headers.get('x-frame-options'), 'DENY');
     assert.match(healthResponse.headers.get('content-security-policy'), /default-src 'self'/);
 
@@ -202,12 +202,29 @@ test('authenticates with HttpOnly session and enforces CSRF, edit locks and proj
       headers: { 'X-Edit-Lease': lock.leaseToken },
       body: {
         baseVersion: 1, name: 'NAS 分镜', scene: '室内', aspectRatio: '4/3',
-        shots: [{ id: 'shot-1', imageId: 'image-1', hasImage: true, imageSrc: `data:image/png;base64,${imageData}` }]
+        shots: [{ shotUnitId: 'unit-1', imageId: 'image-1', hasImage: true, imageSrc: `data:image/png;base64,${imageData}` }],
+        rundown: {
+          version: 1,
+          days: [{
+            id: 'day-1', date: '2026-08-18',
+            items: [{ id: 'item-1', type: 'shot', shotUnitId: 'unit-1', startTime: '09:00', endTime: '10:00', setupLabel: '客厅日景' }]
+          }]
+        }
       }
     });
     assert.equal(saveResponse.status, 200, await saveResponse.clone().text());
     const saved = await saveResponse.json();
     assert.equal(saved.version, 2);
+    assert.equal(saved.shots[0].shotUnitId, 'unit-1');
+    assert.equal(saved.rundown.days[0].items[0].setupLabel, '客厅日景');
+
+    const saveWithoutRundown = await api(baseUrl, admin, `/api/projects/${created.id}`, {
+      method: 'PUT', headers: { 'X-Edit-Lease': lock.leaseToken }, body: { baseVersion: 2, name: 'NAS 分镜改名' }
+    });
+    assert.equal(saveWithoutRundown.status, 200, await saveWithoutRundown.clone().text());
+    const savedWithoutRundown = await saveWithoutRundown.json();
+    assert.equal(savedWithoutRundown.version, 3);
+    assert.equal(savedWithoutRundown.rundown.days[0].items[0].shotUnitId, 'unit-1');
     assert.equal(saved.shots[0].imageSrc, `/api/projects/${created.id}/images/image-1`);
 
     const stale = await api(baseUrl, admin, `/api/projects/${created.id}`, {
@@ -224,6 +241,8 @@ test('authenticates with HttpOnly session and enforces CSRF, edit locks and proj
       method: 'POST', body: { name: 'NAS 分镜副本', sourceProjectId: created.id }
     });
     assert.equal(duplicateResponse.status, 201);
+    const duplicated = await duplicateResponse.json();
+    assert.equal(duplicated.rundown.days[0].items[0].setupLabel, '客厅日景');
 
     await api(baseUrl, admin, `/api/projects/${created.id}/lock`, { method: 'DELETE', headers: { 'X-Edit-Lease': lock.leaseToken } });
     const deleteResponse = await api(baseUrl, admin, `/api/projects/${created.id}`, { method: 'DELETE' });
@@ -627,7 +646,7 @@ test('migrates v4 project presence to per-browser-tab records', async () => {
     assert.deepEqual((await (await api(baseUrl, admin, '/api/admin/project-presence')).json()).userIds, [admin.user.id]);
 
     const db = openDatabase(databasePath);
-    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 5);
+    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 6);
     assert.ok(db.prepare('PRAGMA table_info(project_presence)').all().some((column) => column.name === 'presence_id'));
     db.close();
   }, async (databasePath) => {
@@ -646,6 +665,8 @@ test('migrates v4 project presence to per-browser-tab records', async () => {
       CREATE INDEX project_presence_user_idx ON project_presence(user_id, project_id);
       CREATE INDEX project_presence_expiry_idx ON project_presence(expires_at);
       DELETE FROM schema_migrations WHERE version = 5;
+      DELETE FROM schema_migrations WHERE version = 6;
+      ALTER TABLE projects DROP COLUMN rundown_json;
       PRAGMA user_version = 4;
     `);
     db.close();
@@ -667,7 +688,7 @@ test('automatically migrates v1 share links, trims history and resets project nu
     assert.equal((await fetch(`${baseUrl}/share/${links[0].token}`)).status, 200);
 
     const db = openDatabase(databasePath);
-    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 5);
+    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 6);
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
     db.close();
   }, async (databasePath) => {
@@ -682,6 +703,8 @@ test('automatically migrates v1 share links, trims history and resets project nu
       DELETE FROM schema_migrations WHERE version = 3;
       DELETE FROM schema_migrations WHERE version = 4;
       DELETE FROM schema_migrations WHERE version = 5;
+      DELETE FROM schema_migrations WHERE version = 6;
+      ALTER TABLE projects DROP COLUMN rundown_json;
       DROP TABLE project_presence;
       PRAGMA user_version = 1;
     `);
@@ -704,7 +727,7 @@ test('migrates legacy gray shot headers to the writing area background', async (
     assert.equal(project.shots[0].headerColor, '#fffdf8');
 
     const db = openDatabase(databasePath);
-    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 5);
+    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 6);
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 3').get().count, 1);
     db.close();
   }, async (databasePath) => {
@@ -720,8 +743,42 @@ test('migrates legacy gray shot headers to the writing area background', async (
     db.prepare('DELETE FROM schema_migrations WHERE version = 3').run();
     db.prepare('DELETE FROM schema_migrations WHERE version = 4').run();
     db.prepare('DELETE FROM schema_migrations WHERE version = 5').run();
+    db.prepare('DELETE FROM schema_migrations WHERE version = 6').run();
+    db.exec('ALTER TABLE projects DROP COLUMN rundown_json');
     db.exec('DROP TABLE project_presence');
     db.exec('PRAGMA user_version = 2');
+    db.close();
+  });
+});
+
+test('migrates logical shot ids and keeps grouped cards as one rundown unit', async () => {
+  await withServer(async (baseUrl, databasePath) => {
+    const admin = await login(baseUrl);
+    const project = await (await api(baseUrl, admin, '/api/projects/1')).json();
+    assert.ok(project.shots[0].shotUnitId);
+    assert.equal(project.shots[0].shotUnitId, project.shots[1].shotUnitId);
+    assert.ok(project.shots[2].shotUnitId);
+    assert.notEqual(project.shots[0].shotUnitId, project.shots[2].shotUnitId);
+    assert.deepEqual(project.rundown, { version: 1, days: [] });
+
+    const db = openDatabase(databasePath);
+    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 6);
+    assert.ok(db.prepare('PRAGMA table_info(projects)').all().some((column) => column.name === 'rundown_json'));
+    db.close();
+  }, async (databasePath) => {
+    await initialize(databasePath);
+    const db = openDatabase(databasePath);
+    const result = db.prepare("INSERT INTO projects (name, shots_json) VALUES ('Legacy grouped shots', ?)").run(JSON.stringify([
+      { groupId: 'group-a', action: '第一格' },
+      { groupId: 'group-a', action: '第二格' },
+      { action: '独立镜头' }
+    ]));
+    const adminId = Number(db.prepare("SELECT id FROM users WHERE username = 'admin'").get().id);
+    db.prepare("INSERT INTO project_members (project_id, user_id, role, created_by_user_id, created_at, updated_at) VALUES (?, ?, 'owner', ?, ?, ?)")
+      .run(Number(result.lastInsertRowid), adminId, adminId, Date.now(), Date.now());
+    db.prepare('DELETE FROM schema_migrations WHERE version = 6').run();
+    db.exec('ALTER TABLE projects DROP COLUMN rundown_json');
+    db.exec('PRAGMA user_version = 5');
     db.close();
   });
 });
@@ -734,7 +791,7 @@ test('migrates an isolated v0 database without changing project or image bytes',
     assert.equal((await projectsResponse.json()).length, 4);
     assert.ok(readFileSync(databasePath).length > 0);
     const db = openDatabase(databasePath);
-    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 5);
+    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 6);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM project_members WHERE role = 'owner'").get().count, 4);
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
     db.close();
@@ -745,7 +802,9 @@ test('migrates an isolated v0 database without changing project or image bytes',
     beforeDb.close();
     const passwordHash = await hashPassword(TEST_PASSWORD, TEST_PASSWORD_PARAMS);
     const migrated = setupDatabase({ databasePath, username: 'admin', displayName: 'Administrator', passwordHash });
-    assert.deepEqual(migrated.fingerprint, before);
+    assert.equal(migrated.fingerprint.projectCount, before.projectCount);
+    assert.equal(migrated.fingerprint.imageCount, before.imageCount);
+    assert.equal(migrated.fingerprint.imageHash, before.imageHash);
     assert.ok(migrated.backup?.path);
   });
 });
