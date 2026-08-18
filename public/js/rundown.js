@@ -213,20 +213,26 @@ function renderRichTextEntry(entry) {
     return visibleRichText ? richHtml : plainTextToEditableHtml(entry.text);
 }
 
-export function unitContentSectionsHtml(unit, renderEntry = renderRichTextEntry) {
-    const sections = unitContentSections(unit);
-    if (!sections.length) return '—';
-    return `<div class="rundown-content-sections">${sections
-        .map((section) => {
-            const entries = section.entries?.length
-                ? section.entries
-                : [{ text: section.text, html: '' }];
-            const content = entries.map((entry, index) => {
-                const prefix = section.type === 'action' && entries.length > 1 ? `${index + 1}. ` : '';
-                return `${prefix}${renderEntry(entry)}`;
-            }).join(' / ');
-            return `<p class="is-${section.type}">${content}</p>`;
-        }).join('')}</div>`;
+export function unitCardColumnHtml(unit, type, renderEntry = renderRichTextEntry) {
+    const config = type === 'note'
+        ? { textKey: 'dialogue', htmlKey: 'dialogueHtml' }
+        : { textKey: 'action', htmlKey: 'actionHtml' };
+    const cards = Array.isArray(unit?.cards) ? unit.cards : [];
+    if (!cards.length) return '—';
+    const multiple = cards.length > 1;
+    const entries = cards.map((card, index) => {
+        const entry = {
+            text: String(card?.[config.textKey] || '').trim(),
+            html: typeof card?.[config.htmlKey] === 'string' ? card[config.htmlKey].trim() : ''
+        };
+        const content = entry.text || entry.html ? renderEntry(entry) : '—';
+        const number = multiple
+            ? `<span class="rundown-card-index" aria-hidden="true">${index + 1}.</span>`
+            : '';
+        const label = multiple ? ` aria-label="卡片 ${index + 1}"` : '';
+        return `<div class="rundown-card-entry"${label}>${number}<div class="rundown-card-entry-content">${content}</div></div>`;
+    }).join('');
+    return `<div class="rundown-card-entries is-${type}${multiple ? ' has-multiple' : ''}">${entries}</div>`;
 }
 
 function unitParameterRows(unit) {
@@ -422,14 +428,15 @@ export function createRundownController({
     }
 
     function renderShotCells(unit) {
-        if (!unit) return '<td colspan="4" class="rundown-missing-shot">关联镜头已不存在</td>';
+        if (!unit) return '<td colspan="5" class="rundown-missing-shot">关联镜头已不存在</td>';
         const thumbnails = unit.images.slice(0, 3).map((src) => `<img src="${escapeHtml(src)}" alt="">`).join('') || '<span>无图</span>';
         const multipleImageClass = unit.images.length > 1 ? ' has-multiple' : '';
         return `
             <td class="rundown-shot-cell"><div class="rundown-row-thumbs${multipleImageClass}">${thumbnails}</div></td>
             <td class="rundown-parameters-cell">${unitParametersHtml(unit)}</td>
             <td>${escapeHtml(unit.scene)}</td>
-            <td class="rundown-content-cell">${unitContentSectionsHtml(unit)}</td>`;
+            <td class="rundown-content-cell">${unitCardColumnHtml(unit, 'action')}</td>
+            <td class="rundown-note-cell">${unitCardColumnHtml(unit, 'note')}</td>`;
     }
 
     function renderItem(day, item, overlapIds) {
@@ -437,7 +444,7 @@ export function createRundownController({
         const invalid = itemValidation(item) || (item.type === 'event' && !String(item.title || '').trim());
         const warningClass = invalid ? ' has-error' : (overlapIds.has(item.id) ? ' has-warning' : '');
         const sourceCells = item.type === 'shot' ? renderShotCells(unit) : `
-            <td class="rundown-event-cell" colspan="4">
+            <td class="rundown-event-cell" colspan="5">
                 <input class="rundown-event-title" data-field="title" type="text" maxlength="240" value="${escapeHtml(item.title || '')}" placeholder="集合、布光、转场、午餐…" ${readOnly ? 'disabled' : ''}>
             </td>`;
         const itemLabel = unit
@@ -480,9 +487,9 @@ export function createRundownController({
                 </header>
                 <div class="rundown-table-wrap" data-day-dropzone="${escapeHtml(day.id)}">
                     <table class="rundown-table">
-                        <thead><tr><th>顺序</th><th>时间</th><th>画面</th><th>镜头参数</th><th>场次</th><th>画面内容 / 动作</th><th></th></tr></thead>
+                        <thead><tr><th>顺序</th><th>时间</th><th>画面</th><th>镜头参数</th><th>场次</th><th>画面内容</th><th>备注</th><th></th></tr></thead>
                         <tbody>${items.map((item) => renderItem(day, item, overlaps)).join('')}
-                            ${items.length ? '' : '<tr class="rundown-drop-placeholder"><td colspan="7">把镜头拖到这里，或添加一个现场事项</td></tr>'}
+                            ${items.length ? '' : '<tr class="rundown-drop-placeholder"><td colspan="8">把镜头拖到这里，或添加一个现场事项</td></tr>'}
                         </tbody>
                     </table>
                 </div>
@@ -643,13 +650,13 @@ export function createRundownController({
         return sortedDays().map((day, dayIndex) => `
             <section class="rundown-print-day">
                 <header><div><span>拍摄计划 · DAY ${dayIndex + 1}</span><h1>${escapeHtml(project?.name || '未命名项目')}</h1></div><div><strong>${escapeHtml(day.date)}</strong><small>${day.items.length} 项</small></div></header>
-                <table><thead><tr><th>顺序</th><th>时间</th><th>画面</th><th>镜头参数</th><th>场次</th><th>画面内容 / 动作</th></tr></thead>
+                <table><thead><tr><th>顺序</th><th>时间</th><th>画面</th><th>镜头参数</th><th>场次</th><th>画面内容</th><th>备注</th></tr></thead>
                 <tbody>${day.items.map((item) => {
-                    if (item.type === 'event') return `<tr class="rundown-print-event"><td><b>事项</b></td><td><b>${escapeHtml(item.startTime)}–${escapeHtml(item.endTime)}</b><small>${escapeHtml(durationLabel(item.startTime, item.endTime))}</small></td><td colspan="4">${escapeHtml(item.title)}</td></tr>`;
+                    if (item.type === 'event') return `<tr class="rundown-print-event"><td><b>事项</b></td><td><b>${escapeHtml(item.startTime)}–${escapeHtml(item.endTime)}</b><small>${escapeHtml(durationLabel(item.startTime, item.endTime))}</small></td><td colspan="5">${escapeHtml(item.title)}</td></tr>`;
                     const unit = shotUnitsById.get(item.shotUnitId);
                     if (!unit) return '';
                     const multipleImageClass = unit.images.length > 1 ? ' has-multiple' : '';
-                    return `<tr><td>${colorSwatches(unit.colors, 'print')}<b>SHOT #${unit.number}</b></td><td><b>${escapeHtml(item.startTime)}–${escapeHtml(item.endTime)}</b><small>${escapeHtml(durationLabel(item.startTime, item.endTime))}</small></td><td><div class="rundown-print-thumbs${multipleImageClass}">${unit.images.slice(0, 3).map((src) => `<img src="${escapeHtml(src)}" alt="">`).join('') || '<span>无图</span>'}</div></td><td>${unitParametersHtml(unit, 'print')}</td><td>${escapeHtml(unit.scene)}</td><td>${unitContentSectionsHtml(unit)}</td></tr>`;
+                    return `<tr><td>${colorSwatches(unit.colors, 'print')}<b>SHOT #${unit.number}</b></td><td><b>${escapeHtml(item.startTime)}–${escapeHtml(item.endTime)}</b><small>${escapeHtml(durationLabel(item.startTime, item.endTime))}</small></td><td><div class="rundown-print-thumbs${multipleImageClass}">${unit.images.slice(0, 3).map((src) => `<img src="${escapeHtml(src)}" alt="">`).join('') || '<span>无图</span>'}</div></td><td>${unitParametersHtml(unit, 'print')}</td><td>${escapeHtml(unit.scene)}</td><td>${unitCardColumnHtml(unit, 'action')}</td><td>${unitCardColumnHtml(unit, 'note')}</td></tr>`;
                 }).join('')}</tbody></table>
             </section>`).join('');
     }
