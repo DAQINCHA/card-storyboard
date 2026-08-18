@@ -228,7 +228,17 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function renderSaveStatus() {
         if (!saveStatusElement) return;
-        saveStatusElement.classList.toggle('hidden', saveStatusState !== 'saved');
+        const displayState = saveStatusState === 'error'
+            ? 'error'
+            : (saveStatusState === 'saved' ? 'saved' : 'saving');
+        const labels = {
+            saved: '已保存',
+            saving: '保存中…',
+            error: '保存失败'
+        };
+        saveStatusElement.dataset.state = displayState;
+        saveStatusElement.querySelector('.save-status-label').textContent = labels[displayState];
+        saveStatusElement.classList.remove('hidden');
     }
 
     function setSaveStatusState(state) {
@@ -257,6 +267,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             dot.className = 'save-status-dot';
             dot.setAttribute('aria-hidden', 'true');
             const label = document.createElement('span');
+            label.className = 'save-status-label';
             label.textContent = '已保存';
             status.append(dot, label);
             saveStatusElement = status;
@@ -2523,7 +2534,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             savedShots: 0
         };
         hasUnsavedChanges = false;
-        setSaveStatusState('saving');
+        if (saveStatusState !== 'error') setSaveStatusState('saving');
 
         pendingSavePromise = perfMeasureAsync('saveState', async () => {
             const payload = buildStateSnapshot();
@@ -2573,7 +2584,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         : (takeoverHolder
                             ? `编辑权已被 ${takeoverHolder} 接管；已停止自动保存。`
                             : '编辑锁已失效；已停止自动保存。'),
-                    { reload: true, saveCopy: true }
+                    { reload: true, saveCopy: true, showSaveStatus: true }
                 );
                 applyEditorAccess();
                 return;
@@ -2594,7 +2605,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
         hasUnsavedChanges = true;
-        setSaveStatusState('unsaved');
+        if (saveStatusState !== 'error') setSaveStatusState('unsaved');
 
         if (saveTimer) {
             clearTimeout(saveTimer);

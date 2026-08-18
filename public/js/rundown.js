@@ -862,8 +862,11 @@ export function createRundownController({
             render();
         },
         setSaveState(value) {
-            elements.saveState.textContent = value === 'saving' ? '保存中…' : value === 'error' ? '保存失败' : value === 'unsaved' ? '未保存' : '已保存';
-            elements.saveState.dataset.state = value;
+            const displayState = value === 'error' ? 'error' : (value === 'saved' ? 'saved' : 'saving');
+            elements.saveState.textContent = displayState === 'error'
+                ? '保存失败'
+                : (displayState === 'saving' ? '保存中…' : '已保存');
+            elements.saveState.dataset.state = displayState;
         },
         acceptSavedRundown(value) {
             rundown = normalizeRundown(value);

@@ -96,18 +96,39 @@
     text-transform: uppercase;
 }
 
-.rundown-save-state {
-    color: var(--text-muted);
+.rundown-save-state,
+.save-status-indicator {
+    --save-state-dot: #62a875;
+    --save-state-text: color-mix(in srgb, #4f8f63 72%, var(--text-muted));
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    color: var(--save-state-text);
     font-size: 0.78rem;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.rundown-save-state::before {
+    content: '';
+    width: 0.38rem;
+    height: 0.38rem;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    background: var(--save-state-dot);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--save-state-dot) 18%, transparent);
 }
 
 .rundown-save-state[data-state="saving"],
-.rundown-save-state[data-state="unsaved"] {
-    color: #b7791f;
+.save-status-indicator[data-state="saving"] {
+    --save-state-dot: #d3a846;
+    --save-state-text: #b7791f;
 }
 
-.rundown-save-state[data-state="error"] {
-    color: var(--danger-color);
+.rundown-save-state[data-state="error"],
+.save-status-indicator[data-state="error"] {
+    --save-state-dot: #dc4f43;
+    --save-state-text: var(--danger-color);
 }
 
 .rundown-readonly-banner {
@@ -3630,21 +3651,15 @@ body.is-sorting {
     top: 50%;
     right: 0.8rem;
     transform: translateY(-50%);
-    display: inline-flex;
-    align-items: center;
-    gap: 0.3rem;
-    color: color-mix(in srgb, #4f8f63 72%, var(--text-muted));
-    font-size: 0.74rem;
-    font-weight: 500;
-    white-space: nowrap;
 }
 
 .save-status-dot {
     width: 0.38rem;
     height: 0.38rem;
+    flex: 0 0 auto;
     border-radius: 50%;
-    background: #62a875;
-    box-shadow: 0 0 0 1px color-mix(in srgb, #62a875 18%, transparent);
+    background: var(--save-state-dot);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--save-state-dot) 18%, transparent);
 }
 
 .takeover-alert-backdrop {
@@ -3908,6 +3923,26 @@ body.is-sorting {
             linear-gradient(rgba(240, 234, 220, 0.04) 1px, transparent 1px),
             linear-gradient(90deg, rgba(240, 234, 220, 0.04) 1px, transparent 1px);
         background-size: 24px 24px;
+    }
+
+    .rundown-validation-summary {
+        border-color: #806b39;
+        background: #332d1e;
+        color: #f1ca72;
+    }
+
+    .rundown-validation-summary.has-error {
+        border-color: #884b47;
+        background: #3b2423;
+        color: #ff9b91;
+    }
+
+    .rundown-item-row.has-error td {
+        background: #3b2423;
+    }
+
+    .rundown-item-row.has-warning td {
+        background: #332d1e;
     }
 
     .home-main {
