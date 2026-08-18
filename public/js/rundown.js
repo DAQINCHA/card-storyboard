@@ -1,3 +1,8 @@
+import {
+    plainTextToEditableHtml,
+    sanitizeEditableHtml
+} from './editable-utils.js';
+
 const EMPTY_RUNDOWN = Object.freeze({ version: 1, days: [] });
 
 function clone(value) {
@@ -73,7 +78,15 @@ function normalizeRundown(value) {
     };
 }
 
-function buildShotUnits(shots) {
+function appendRichTextEntry(entries, plainValue, htmlValue) {
+    const text = String(plainValue || '').trim();
+    if (!text) return;
+    const html = typeof htmlValue === 'string' ? htmlValue.trim() : '';
+    if (entries.some((entry) => entry.text === text && entry.html === html)) return;
+    entries.push({ text, html });
+}
+
+export function buildShotUnits(shots) {
     const units = [];
     const unitsById = new Map();
     let sceneIndex = -1;
@@ -99,6 +112,8 @@ function buildShotUnits(shots) {
                 images: [],
                 actions: [],
                 notes: [],
+                actionEntries: [],
+                noteEntries: [],
                 shotSizes: [],
                 cameraMovements: [],
                 supports: [],
@@ -113,6 +128,8 @@ function buildShotUnits(shots) {
         unit.images = unique([...unit.images, shot.hasImage ? shot.imageSrc : '']);
         unit.actions = unique([...unit.actions, shot.action]);
         unit.notes = unique([...unit.notes, shot.dialogue]);
+        appendRichTextEntry(unit.actionEntries, shot.action, shot.actionHtml);
+        appendRichTextEntry(unit.noteEntries, shot.dialogue, shot.dialogueHtml);
         unit.shotSizes = unique([...unit.shotSizes, shot.shotSize]);
         unit.cameraMovements = unique([...unit.cameraMovements, shot.cameraMovement]);
         unit.supports = unique([...unit.supports, toChineseSupportLabel(shot.move)]);
@@ -136,8 +153,8 @@ function unitContentSections(unit) {
     const actions = unit.actions.map((value, index) => unit.actions.length > 1 ? `${index + 1}. ${value}` : value).join(' / ');
     const notes = unit.notes.join(' / ');
     return [
-        actions ? { type: 'action', text: actions } : null,
-        notes ? { type: 'note', text: notes } : null
+        actions ? { type: 'action', text: actions, entries: unit.actionEntries } : null,
+        notes ? { type: 'note', text: notes, entries: unit.noteEntries } : null
     ].filter(Boolean);
 }
 
@@ -145,11 +162,71 @@ function unitContent(unit) {
     return unitContentSections(unit).map((section) => section.text).join(' · ');
 }
 
-function unitContentSectionsHtml(unit) {
+function editableHtmlToInlineHtml(value) {
+    const sanitized = sanitizeEditableHtml(value);
+    const template = document.createElement('template');
+    template.innerHTML = sanitized;
+    const parts = [];
+    let hasVisualOutput = false;
+    let lastWasBreak = false;
+
+    function appendBreak() {
+        if (hasVisualOutput && !lastWasBreak) parts.push('<br>');
+        hasVisualOutput = true;
+        lastWasBreak = true;
+    }
+
+    function appendNodes(nodes) {
+        Array.from(nodes).forEach((node) => {
+            if (node.nodeType === Node.TEXT_NODE) {
+                const text = node.textContent || '';
+                if (!text) return;
+                parts.push(escapeHtml(text));
+                hasVisualOutput = true;
+                lastWasBreak = false;
+                return;
+            }
+            if (node.nodeType !== Node.ELEMENT_NODE) return;
+            const tag = node.tagName.toLowerCase();
+            if (tag === 'br') {
+                appendBreak();
+                return;
+            }
+            if (tag === 'div') appendBreak();
+            if (tag === 'span' && node.style?.color) {
+                parts.push(`<span style="color:${escapeHtml(node.style.color)}">`);
+                appendNodes(node.childNodes);
+                parts.push('</span>');
+                return;
+            }
+            appendNodes(node.childNodes);
+        });
+    }
+
+    appendNodes(template.content.childNodes);
+    return parts.join('');
+}
+
+function renderRichTextEntry(entry) {
+    const richHtml = entry.html ? editableHtmlToInlineHtml(entry.html) : '';
+    const visibleRichText = richHtml.replace(/<[^>]*>/g, '').trim();
+    return visibleRichText ? richHtml : plainTextToEditableHtml(entry.text);
+}
+
+export function unitContentSectionsHtml(unit, renderEntry = renderRichTextEntry) {
     const sections = unitContentSections(unit);
     if (!sections.length) return '—';
     return `<div class="rundown-content-sections">${sections
-        .map((section) => `<p class="is-${section.type}">${escapeHtml(section.text)}</p>`).join('')}</div>`;
+        .map((section) => {
+            const entries = section.entries?.length
+                ? section.entries
+                : [{ text: section.text, html: '' }];
+            const content = entries.map((entry, index) => {
+                const prefix = section.type === 'action' && entries.length > 1 ? `${index + 1}. ` : '';
+                return `${prefix}${renderEntry(entry)}`;
+            }).join(' / ');
+            return `<p class="is-${section.type}">${content}</p>`;
+        }).join('')}</div>`;
 }
 
 function unitParameterRows(unit) {
@@ -403,7 +480,7 @@ export function createRundownController({
                 </header>
                 <div class="rundown-table-wrap" data-day-dropzone="${escapeHtml(day.id)}">
                     <table class="rundown-table">
-                        <thead><tr><th>顺序</th><th>时间</th><th>画面</th><th>镜头参数</th><th>场次</th><th>动作 / 备注</th><th></th></tr></thead>
+                        <thead><tr><th>顺序</th><th>时间</th><th>画面</th><th>镜头参数</th><th>场次</th><th>画面内容 / 动作</th><th></th></tr></thead>
                         <tbody>${items.map((item) => renderItem(day, item, overlaps)).join('')}
                             ${items.length ? '' : '<tr class="rundown-drop-placeholder"><td colspan="7">把镜头拖到这里，或添加一个现场事项</td></tr>'}
                         </tbody>
@@ -566,7 +643,7 @@ export function createRundownController({
         return sortedDays().map((day, dayIndex) => `
             <section class="rundown-print-day">
                 <header><div><span>拍摄计划 · DAY ${dayIndex + 1}</span><h1>${escapeHtml(project?.name || '未命名项目')}</h1></div><div><strong>${escapeHtml(day.date)}</strong><small>${day.items.length} 项</small></div></header>
-                <table><thead><tr><th>顺序</th><th>时间</th><th>画面</th><th>镜头参数</th><th>场次</th><th>动作 / 备注</th></tr></thead>
+                <table><thead><tr><th>顺序</th><th>时间</th><th>画面</th><th>镜头参数</th><th>场次</th><th>画面内容 / 动作</th></tr></thead>
                 <tbody>${day.items.map((item) => {
                     if (item.type === 'event') return `<tr class="rundown-print-event"><td><b>事项</b></td><td><b>${escapeHtml(item.startTime)}–${escapeHtml(item.endTime)}</b><small>${escapeHtml(durationLabel(item.startTime, item.endTime))}</small></td><td colspan="4">${escapeHtml(item.title)}</td></tr>`;
                     const unit = shotUnitsById.get(item.shotUnitId);
