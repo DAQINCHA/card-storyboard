@@ -40,7 +40,6 @@
     min-height: 100vh;
     margin: 0 auto;
     padding: 1.25rem 1.4rem 2rem;
-    background: var(--bg-color);
     color: var(--text-main);
 }
 

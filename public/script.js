@@ -3141,11 +3141,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const details = document.createElement('div');
         details.className = 'shot-details';
-        details.appendChild(createPrintTextBlockFromField(card.querySelector('.text-action')));
+        details.appendChild(createPrintShotSelectRow(card));
         const firstDivider = document.createElement('div');
         firstDivider.className = 'divider';
         details.appendChild(firstDivider);
-        details.appendChild(createPrintShotSelectRow(card));
+        details.appendChild(createPrintTextBlockFromField(card.querySelector('.text-action')));
         const secondDivider = document.createElement('div');
         secondDivider.className = 'divider';
         details.appendChild(secondDivider);
