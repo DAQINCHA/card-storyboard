@@ -2746,6 +2746,10 @@ body.is-sorting {
     cursor: default;
 }
 
+.editor-view.is-readonly .scene-divider-label {
+    cursor: default;
+}
+
 .editor-view.is-readonly .drag-handle,
 .editor-view.is-readonly .delete-shot-btn,
 .editor-view.is-readonly .image-hover-actions,

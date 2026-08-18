@@ -338,8 +338,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (projectInput) projectInput.readOnly = editorReadOnly;
         if (aspectRatioSelect) aspectRatioSelect.disabled = editorReadOnly;
         [addShotBtn, addDropdownToggle, multiSelectToggleBtn].forEach((button) => { if (button) button.disabled = editorReadOnly; });
-        storyboardGrid.querySelectorAll('.rich-text-input').forEach((field) => field.setAttribute('contenteditable', canEdit ? 'true' : 'false'));
-        storyboardGrid.querySelectorAll('input, button').forEach((control) => { control.disabled = editorReadOnly; });
+        storyboardGrid.querySelectorAll('.rich-text-input, .scene-divider-label-text').forEach((field) => {
+            field.setAttribute('contenteditable', canEdit ? 'true' : 'false');
+            field.setAttribute('aria-readonly', editorReadOnly ? 'true' : 'false');
+        });
+        storyboardGrid.querySelectorAll('input, button, select').forEach((control) => { control.disabled = editorReadOnly; });
         if (storyboardSortable) storyboardSortable.option('disabled', editorReadOnly || isMultiSelectMode);
         if (projectAccessBadge) {
             const accessRole = String(currentProject?.accessRole || '').toLowerCase();
@@ -2112,7 +2115,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         label.className = 'scene-divider-label';
         const labelText = document.createElement('span');
         labelText.className = 'scene-divider-label-text';
-        labelText.contentEditable = 'true';
+        labelText.contentEditable = editorReadOnly ? 'false' : 'true';
+        labelText.setAttribute('aria-readonly', editorReadOnly ? 'true' : 'false');
         labelText.dataset.placeholder = '点击添加场次描述';
         labelText.setAttribute('role', 'textbox');
         labelText.setAttribute('aria-label', '场次描述');
@@ -2145,12 +2149,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
 
         labelText.addEventListener('keydown', (event) => {
+            if (editorReadOnly) {
+                return;
+            }
             if (event.key === 'Enter') {
                 event.preventDefault();
                 labelText.blur();
             }
         });
         labelText.addEventListener('blur', () => {
+            if (editorReadOnly) {
+                return;
+            }
             const normalized = normalizeSceneDividerLabel(labelText.textContent || '');
             labelText.textContent = normalized;
             scheduleSyncSceneHeaderInputByViewport();
@@ -2159,12 +2169,18 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         });
         labelText.addEventListener('input', () => {
+            if (editorReadOnly) {
+                return;
+            }
             scheduleSyncSceneHeaderInputByViewport();
             if (!isRestoringState) {
                 scheduleSaveState();
             }
         });
         label.addEventListener('click', () => {
+            if (editorReadOnly) {
+                return;
+            }
             labelText.focus();
         });
 
