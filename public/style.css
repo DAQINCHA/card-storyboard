@@ -1282,6 +1282,7 @@ body.is-sorting {
 .shot-header {
     background: var(--orange-header);
     color: white;
+    border-bottom: 1px solid var(--text-main);
     height: 27px;
     padding: 0 0.68rem;
     display: flex;
