@@ -174,7 +174,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     let saveStatusElement = null;
     let takeoverNoticeShown = false;
     let searchTimer = null;
-    const PRINT_PAGE_STYLE_ID = 'dynamic-print-page-style';
     const PRELOAD_HOME_CLASS = 'preload-view-home';
     const PRELOAD_EDITOR_CLASS = 'preload-view-editor';
     const DEFAULT_NEW_PROJECT_SHOT_COUNT = 5;
@@ -2857,30 +2856,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         previousDocumentTitleBeforePrint = null;
     }
 
-    function applyPrintPageSizeOverride(printAspect) {
-        const existingStyle = document.getElementById(PRINT_PAGE_STYLE_ID);
-        if (printAspect !== '9/16') {
-            if (existingStyle) {
-                existingStyle.remove();
-            }
-            return;
-        }
-
-        const styleEl = existingStyle || document.createElement('style');
-        styleEl.id = PRINT_PAGE_STYLE_ID;
-        styleEl.textContent = `
-            @media print {
-                @page {
-                    size: 16in 9in;
-                    margin: 8mm 10mm 14mm 10mm;
-                }
-            }
-        `;
-        if (!existingStyle) {
-            document.head.appendChild(styleEl);
-        }
-    }
-
     function createPrintTextBlockFromField(sourceField) {
         const className = ((sourceField?.className || 'auto-resize-textarea')
             .replace(/\brich-text-input\b/g, '')
@@ -3212,7 +3187,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         } else {
             delete printPages.dataset.printAspect;
         }
-        applyPrintPageSizeOverride(printAspect);
         const headerSource = appContainer.querySelector('.project-header');
         const cardsPerPage = 10;
         const pagesFragment = document.createDocumentFragment();
@@ -3252,7 +3226,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     function clearPrintLayout() {
         printPages.innerHTML = '';
         delete printPages.dataset.printAspect;
-        applyPrintPageSizeOverride('');
         isPrintLayoutReady = false;
     }
 

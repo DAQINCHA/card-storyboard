@@ -288,7 +288,7 @@ export function createRundownController({
     let colorFilterOptions = [];
 
     function applyProjectAspectRatio() {
-        const aspect = ['16/9', '4/3', '2.35/1', '9/16'].includes(project?.aspectRatio)
+        const aspect = ['16/9', '4/3', '2.35/1'].includes(project?.aspectRatio)
             ? project.aspectRatio
             : '16/9';
         const cssAspect = aspect.replace('/', ' / ');
