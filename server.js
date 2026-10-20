@@ -1,6 +1,7 @@
 const crypto = require('node:crypto');
 const { createReadStream, existsSync, mkdirSync, statSync } = require('node:fs');
 const { createServer } = require('node:http');
+const os = require('node:os');
 const path = require('node:path');
 
 const {
@@ -34,6 +35,17 @@ const {
 const DEFAULT_PORT = 5199;
 const DEFAULT_HOST = '0.0.0.0';
 const DEFAULT_DB_PATH = path.join(__dirname, 'data', 'storyboard.db');
+
+function lanAddresses() {
+  const found = [];
+  for (const list of Object.values(os.networkInterfaces())) {
+    for (const item of list || []) {
+      if ((item.family === 'IPv4' || item.family === 4) && !item.internal && /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(item.address) && !found.includes(item.address)) found.push(item.address);
+    }
+  }
+  return found;
+}
+
 const DEFAULT_PUBLIC_DIR = path.join(__dirname, 'public');
 const SESSION_COOKIE = 'storyboard_session';
 const SHARE_COOKIE = 'storyboard_share';
@@ -1296,8 +1308,15 @@ if (require.main === module) {
         const allowedOrigins = (process.env.STORYBOARD_ALLOWED_ORIGINS || publicOrigin).split(',').map((item) => item.trim()).filter(Boolean);
         const application = createStoryboardApplication({ databasePath, publicDir: DEFAULT_PUBLIC_DIR, publicOrigin, allowedOrigins });
         application.server.listen(port, host, () => {
-          console.log(`Storyboard server running at ${publicOrigin}`);
-          if (publicOrigin.startsWith('http://')) console.warn('WARNING: insecure HTTP compatibility mode is enabled. Network traffic is not encrypted.');
+          const lines = ['', '  卡片分镜 · 局域网分镜管理', '  ─────────────────────────────────────────', `  本机    http://127.0.0.1:${port}`];
+          if (host !== '127.0.0.1' && host !== 'localhost' && host !== '::1') {
+            for (const ip of lanAddresses().slice(0, 2)) lines.push(`  局域网  http://${ip}:${port}`);
+          }
+          const dataPath = path.relative(__dirname, databasePath);
+          lines.push(`  数据    ${dataPath.startsWith('..') ? databasePath : dataPath}`);
+          if (publicOrigin.startsWith('http://')) lines.push('  提示    当前为 HTTP 明文模式，仅适合可信局域网。');
+          lines.push('', '  关闭这个窗口即停止服务。', '');
+          console.log(lines.join('\n'));
         });
         let closing = false;
         const shutdown = async () => {
