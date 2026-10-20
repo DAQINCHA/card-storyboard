@@ -19,7 +19,7 @@ const {
   tokenHash,
   validatePassword,
   verifyPassword
-} = require('./server/security');
+} = require('./lib/security');
 const {
   SCHEMA_VERSION,
   assertCurrentSchema,
@@ -30,7 +30,7 @@ const {
   openDatabase,
   restoreDatabase,
   setupDatabase
-} = require('./server/schema');
+} = require('./lib/schema');
 
 const DEFAULT_PORT = 5199;
 const DEFAULT_HOST = '0.0.0.0';

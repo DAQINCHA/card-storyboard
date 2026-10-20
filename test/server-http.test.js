@@ -5,8 +5,8 @@ const path = require('node:path');
 const test = require('node:test');
 
 const { createStoryboardApplication, setupDatabase } = require('../server.js');
-const { collectDataFingerprint, openDatabase, restoreDatabase } = require('../server/schema.js');
-const { hashPassword, tokenHash } = require('../server/security.js');
+const { collectDataFingerprint, openDatabase, restoreDatabase } = require('../lib/schema.js');
+const { hashPassword, tokenHash } = require('../lib/security.js');
 
 const projectRoot = path.dirname(__dirname);
 const TEST_ORIGIN = 'http://storyboard.test';
