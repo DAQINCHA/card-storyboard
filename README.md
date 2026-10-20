@@ -20,7 +20,7 @@
 - 默认服务端口：`5199`
 - 数据库位置：`data/storyboard.db`
 
-项目只使用 Node.js 内置模块，不需要安装 npm 依赖。Docker Compose 部署请参见 [README_Docker.md](README_Docker.md)。
+项目只使用 Node.js 内置模块，不需要安装 npm 依赖。
 
 ## 本地运行
 
@@ -94,7 +94,7 @@ node server.js setup-admin --username admin
 npm run verify-db
 ```
 
-首次验收应确认旧项目数量、名称、图片与 PDF 布局，并实际测试 editor、viewer 和匿名只读链接。Docker 部署的升级步骤见 [README_Docker.md](README_Docker.md)。
+首次验收应确认旧项目数量、名称、图片与 PDF 布局，并实际测试 editor、viewer 和匿名只读链接。
 
 ## 备份与恢复
 
@@ -106,7 +106,7 @@ npm run verify-db
 node server.js restore-db --backup data/backups/storyboard-v0-时间戳.db --confirm=RESTORE
 ```
 
-恢复命令会验证备份，为当前数据库再创建一份一致性备份，并保留被替换的数据库文件。恢复旧版 schema 后，再次运行当前版本前需要重新执行 `setup-admin`。Docker 部署的恢复命令见 [README_Docker.md](README_Docker.md)。
+恢复命令会验证备份，为当前数据库再创建一份一致性备份，并保留被替换的数据库文件。恢复旧版 schema 后，再次运行当前版本前需要重新执行 `setup-admin`。
 
 ## 开发与检查
 
