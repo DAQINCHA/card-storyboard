@@ -3,6 +3,8 @@ const { createReadStream, existsSync, mkdirSync, statSync } = require('node:fs')
 const { createServer } = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
+const fs = require('node:fs');
+const { DatabaseSync: BackupDatabase } = require('node:sqlite');
 
 const {
   LoginRateLimiter,
@@ -1276,7 +1278,40 @@ async function runSetupAdmin(databasePath, argv) {
   if (result.backup) console.log(`备份: ${result.backup.path}`);
 }
 
+function loadEnvFile(file) {
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch (error) { return; }
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const index = line.indexOf('=');
+    if (index <= 0) continue;
+    const key = line.slice(0, index).trim();
+    let value = line.slice(index + 1).trim();
+    if (/^(['"]).*\1$/.test(value)) value = value.slice(1, -1);
+    if (process.env[key] === undefined) process.env[key] = value;
+  }
+}
+
+/* 启动时备份数据库：data/backups/<名>-startup-<时间>.db，只保留最近 10 份 */
+function backupOnStartup(dbPath, keep = 10) {
+  if (!fs.existsSync(dbPath)) return null;
+  const dir = path.join(path.dirname(dbPath), "backups");
+  fs.mkdirSync(dir, { recursive: true });
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+  const base = path.basename(dbPath).replace(/\.[^.]+$/, "");
+  const target = path.join(dir, `${base}-startup-${stamp}.db`);
+  const db = new BackupDatabase(dbPath);
+  try { db.exec(`VACUUM INTO '${target.replace(/'/g, "''")}'`); } finally { db.close(); }
+  const old = fs.readdirSync(dir).filter((n) => n.startsWith(`${base}-startup-`) && n.endsWith(".db")).sort();
+  for (const n of old.slice(0, Math.max(0, old.length - keep))) fs.rmSync(path.join(dir, n), { force: true });
+  return target;
+}
+
 if (require.main === module) {
+  loadEnvFile(path.join(__dirname, '.env'));
   const databasePath = path.resolve(process.env.STORYBOARD_DATA_FILE || DEFAULT_DB_PATH);
   const command = process.argv[2];
   if (command === 'setup-admin') {
@@ -1306,6 +1341,8 @@ if (require.main === module) {
       console.error('Refusing insecure HTTP startup. Set STORYBOARD_ALLOW_INSECURE_HTTP=1 only on a trusted LAN, or configure HTTPS.');
       process.exitCode = 1;
     } else {
+      let backupPath = null;
+      try { backupPath = backupOnStartup(databasePath); } catch (error) { console.warn(`  数据库备份失败：${error.message}`); }
       try {
         const allowedOrigins = (process.env.STORYBOARD_ALLOWED_ORIGINS || publicOrigin).split(',').map((item) => item.trim()).filter(Boolean);
         const application = createStoryboardApplication({ databasePath, publicDir: DEFAULT_PUBLIC_DIR, publicOrigin, allowedOrigins });
@@ -1317,6 +1354,7 @@ if (require.main === module) {
           }
           const dataPath = path.relative(__dirname, databasePath);
           lines.push(`  数据    ${dataPath.startsWith('..') ? databasePath : dataPath}`);
+          if (backupPath) { const b = path.relative(__dirname, backupPath); lines.push(`  备份    ${b.startsWith("..") ? backupPath : b}（保留最近 10 份）`); }
           lines.push('', '  关闭这个窗口即停止服务。', '');
           console.log(lines.join('\n'));
         });

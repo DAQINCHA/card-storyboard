@@ -8,3 +8,5 @@ data/*.db-shm
 data/*.db-wal
 data/backups/
 .storyboard-server.pid
+
+.env*
