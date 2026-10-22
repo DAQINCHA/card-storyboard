@@ -1293,8 +1293,15 @@ function loadEnvFile(file) {
   }
 }
 
-/* 启动时备份数据库：data/backups/<名>-startup-<时间>.db，只保留最近 10 份 */
-function backupOnStartup(dbPath, keep = 10) {
+/* 数据库备份：启动时一次，之后每 2 小时检查，文件有写入才备份；data/backups/ 下只保留最近 10 份 */
+const BACKUP_KEEP = 10;
+const BACKUP_INTERVAL_MS = Number(process.env.BACKUP_INTERVAL_MS) || 2 * 60 * 60 * 1000;
+function databaseSignature(dbPath) {
+  return [dbPath, dbPath + "-wal"].map((file) => {
+    try { const st = fs.statSync(file); return `${st.size}:${st.mtimeMs}`; } catch (error) { return "-"; }
+  }).join("|");
+}
+function backupDatabase(dbPath, kind) {
   if (!fs.existsSync(dbPath)) return null;
   const dir = path.join(path.dirname(dbPath), "backups");
   fs.mkdirSync(dir, { recursive: true });
@@ -1302,12 +1309,33 @@ function backupOnStartup(dbPath, keep = 10) {
   const pad = (n) => String(n).padStart(2, "0");
   const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
   const base = path.basename(dbPath).replace(/\.[^.]+$/, "");
-  const target = path.join(dir, `${base}-startup-${stamp}.db`);
+  const target = path.join(dir, `${base}-${kind}-${stamp}.db`);
   const db = new BackupDatabase(dbPath);
   try { db.exec(`VACUUM INTO '${target.replace(/'/g, "''")}'`); } finally { db.close(); }
-  const old = fs.readdirSync(dir).filter((n) => n.startsWith(`${base}-startup-`) && n.endsWith(".db")).sort();
-  for (const n of old.slice(0, Math.max(0, old.length - keep))) fs.rmSync(path.join(dir, n), { force: true });
+  const mine = fs.readdirSync(dir)
+    .filter((n) => (n.startsWith(`${base}-startup-`) || n.startsWith(`${base}-auto-`)) && n.endsWith(".db"))
+    .map((n) => ({ n, t: n.slice(n.length - 18, n.length - 3) }))
+    .sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : 0));
+  for (const { n } of mine.slice(0, Math.max(0, mine.length - BACKUP_KEEP))) fs.rmSync(path.join(dir, n), { force: true });
   return target;
+}
+let lastBackupSignature = null;
+function backupOnStartup(dbPath) {
+  const target = backupDatabase(dbPath, "startup");
+  lastBackupSignature = databaseSignature(dbPath);
+  return target;
+}
+function scheduleBackups(dbPath) {
+  const timer = setInterval(() => {
+    try {
+      const signature = databaseSignature(dbPath);
+      if (signature === lastBackupSignature) return;
+      const target = backupDatabase(dbPath, "auto");
+      lastBackupSignature = databaseSignature(dbPath);
+      if (target) console.log(`  ${new Date().toLocaleString("zh-CN", { hour12: false })}  已备份数据库 ${path.basename(target)}`);
+    } catch (error) { console.warn(`  数据库定时备份失败：${error.message}`); }
+  }, BACKUP_INTERVAL_MS);
+  timer.unref();
 }
 
 if (require.main === module) {
@@ -1343,6 +1371,7 @@ if (require.main === module) {
     } else {
       let backupPath = null;
       try { backupPath = backupOnStartup(databasePath); } catch (error) { console.warn(`  数据库备份失败：${error.message}`); }
+      scheduleBackups(databasePath);
       try {
         const allowedOrigins = (process.env.STORYBOARD_ALLOWED_ORIGINS || publicOrigin).split(',').map((item) => item.trim()).filter(Boolean);
         const application = createStoryboardApplication({ databasePath, publicDir: DEFAULT_PUBLIC_DIR, publicOrigin, allowedOrigins });
