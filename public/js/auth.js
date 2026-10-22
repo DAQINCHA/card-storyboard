@@ -81,7 +81,9 @@ async function showLogin(message = '') {
             } catch (requestError) {
                 loginError.textContent = requestError.status === 429
                     ? '登录尝试过多，请稍后再试。'
-                    : '用户名或密码错误。';
+                    : requestError.status === 403
+                        ? '请求被服务器拒绝（来源不被允许），请联系管理员。'
+                        : '用户名或密码错误。';
             } finally {
                 submitButton.disabled = false;
             }

@@ -947,7 +947,6 @@ function createStoryboardApplication({
   publicDir = DEFAULT_PUBLIC_DIR,
   publicOrigin = 'http://localhost:5199',
   allowedOrigins = [publicOrigin],
-  allowedHosts = allowedOrigins.map((origin) => { try { return new URL(origin).host; } catch { return ''; } }).filter(Boolean),
   secureCookies = publicOrigin.startsWith('https://'),
   passwordParams = {},
   loginRateLimiter = new LoginRateLimiter(),
@@ -969,7 +968,14 @@ function createStoryboardApplication({
     const fetchSite = String(request.headers['sec-fetch-site'] || '');
     if (fetchSite === 'cross-site') throw new HttpError(403, 'Cross-site request rejected', 'cross_site_rejected');
     const origin = request.headers.origin;
-    if (origin && !allowedOrigins.includes(origin)) throw new HttpError(403, 'Request origin is not allowed', 'origin_rejected');
+    if (!origin || allowedOrigins.includes(origin)) return;
+    const hostName = (value) => String(value || "").split(",")[0].trim().toLowerCase().replace(/:\d+$/, "");
+    let originName = "";
+    try { originName = new URL(origin).hostname.toLowerCase(); } catch (error) {}
+    const candidates = [request.headers.host, request.headers["x-forwarded-host"]].map(hostName).filter(Boolean);
+    if (originName && candidates.includes(originName)) return;
+    console.warn(`  拒绝来源 ${origin}（Host: ${request.headers.host || "-"}，X-Forwarded-Host: ${request.headers["x-forwarded-host"] || "-"}）`);
+    throw new HttpError(403, "Request origin is not allowed", "origin_rejected", { origin, host: request.headers.host || null });
   }
 
   function requireCsrf(request, auth) {
@@ -997,10 +1003,6 @@ function createStoryboardApplication({
     let url;
     try { url = new URL(request.url, `http://${request.headers.host || 'localhost'}`); }
     catch { return sendJson(response, 400, { error: 'Invalid request URL', code: 'invalid_url' }); }
-    const requestHost = String(request.headers.host || '');
-    let requestHostname = '';
-    try { requestHostname = new URL(`http://${requestHost}`).hostname; } catch { /* rejected below */ }
-    if (!allowedHosts.includes(requestHost) && !allowedHosts.includes(requestHostname)) return sendJson(response, 400, { error: 'Request host is not allowed', code: 'host_rejected' });
 
     try {
       if (request.method === 'GET' && url.pathname === '/api/health') return sendJson(response, 200, { ok: true, service: 'card-storyboard', schemaVersion: SCHEMA_VERSION });
@@ -1308,13 +1310,13 @@ if (require.main === module) {
         const allowedOrigins = (process.env.STORYBOARD_ALLOWED_ORIGINS || publicOrigin).split(',').map((item) => item.trim()).filter(Boolean);
         const application = createStoryboardApplication({ databasePath, publicDir: DEFAULT_PUBLIC_DIR, publicOrigin, allowedOrigins });
         application.server.listen(port, host, () => {
-          const lines = ['', '  卡片分镜 · 局域网分镜管理', '  ─────────────────────────────────────────', `  本机    http://127.0.0.1:${port}`];
+          const bar = '='.repeat(60);
+          const lines = [bar, '   卡片分镜  CARD STORYBOARD', bar, '', `  Node:    ${process.execPath}`, '', `  本机    http://127.0.0.1:${port}`];
           if (host !== '127.0.0.1' && host !== 'localhost' && host !== '::1') {
             for (const ip of lanAddresses().slice(0, 2)) lines.push(`  局域网  http://${ip}:${port}`);
           }
           const dataPath = path.relative(__dirname, databasePath);
           lines.push(`  数据    ${dataPath.startsWith('..') ? databasePath : dataPath}`);
-          if (publicOrigin.startsWith('http://')) lines.push('  提示    当前为 HTTP 明文模式，仅适合可信局域网。');
           lines.push('', '  关闭这个窗口即停止服务。', '');
           console.log(lines.join('\n'));
         });

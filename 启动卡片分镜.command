@@ -7,6 +7,9 @@ health='/api/health'
 node_probe='require("node:sqlite")'
 node_min='22.13'
 
+clear
+print -n "\e]0;卡片分镜 · 本地服务\a"
+
 pause_exit() {
   print ''
   print -n '  按任意键关闭窗口…'
@@ -83,6 +86,7 @@ fi
     sleep 0.2
   done
 ) &
+
 
 "$node_bin" --disable-warning=ExperimentalWarning server.js
 exit_code=$?
