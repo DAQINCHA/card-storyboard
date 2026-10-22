@@ -67,9 +67,14 @@ set "LAN_IP="
 "%NODE_BIN%" -e "const n=require('os').networkInterfaces();for(const k in n)for(const a of n[k])if(a.family==='IPv4'&&!a.internal){console.log(a.address);process.exit(0)}" > "%TEMP%\storyboard-lan-ip.txt" 2>nul
 set /p LAN_IP=<"%TEMP%\storyboard-lan-ip.txt"
 del "%TEMP%\storyboard-lan-ip.txt" >nul 2>nul
+rem .env 里配置过的项一律以 .env 为准，这里只在没有配置时用局域网地址兜底
+set "ENV_HAS_PUBLIC="
+set "ENV_HAS_ALLOWED="
+if exist ".env" findstr /b /i /c:"STORYBOARD_PUBLIC_ORIGIN=" ".env" >nul 2>nul && set "ENV_HAS_PUBLIC=1"
+if exist ".env" findstr /b /i /c:"STORYBOARD_ALLOWED_ORIGINS=" ".env" >nul 2>nul && set "ENV_HAS_ALLOWED=1"
 if defined LAN_IP (
-  if not defined STORYBOARD_PUBLIC_ORIGIN set "STORYBOARD_PUBLIC_ORIGIN=http://%LAN_IP%:%PORT%"
-  if not defined STORYBOARD_ALLOWED_ORIGINS set "STORYBOARD_ALLOWED_ORIGINS=http://127.0.0.1:%PORT%,http://localhost:%PORT%,http://%LAN_IP%:%PORT%"
+  if not defined ENV_HAS_PUBLIC if not defined STORYBOARD_PUBLIC_ORIGIN set "STORYBOARD_PUBLIC_ORIGIN=http://%LAN_IP%:%PORT%"
+  if not defined ENV_HAS_ALLOWED if not defined STORYBOARD_ALLOWED_ORIGINS set "STORYBOARD_ALLOWED_ORIGINS=http://127.0.0.1:%PORT%,http://localhost:%PORT%,http://%LAN_IP%:%PORT%"
 )
 
 "%NODE_BIN%" --disable-warning=ExperimentalWarning server.js
