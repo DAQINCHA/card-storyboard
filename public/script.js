@@ -190,6 +190,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     let pendingHeaderSyncRaf = null;
     let pendingSceneHeaderSyncRaf = null;
     let pendingShotGroupFrameRaf = null;
+    let pendingCardInsertRaf = null;
+    let cardInsertLayer = null;
     let storyboardSortable = null;
     let isMultiSelectMode = false;
     let hoveredShotUnitId = '';
@@ -773,6 +775,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             flushVisibleScene();
         }, () => perfMeta);
         scheduleSyncShotGroupFrames();
+        scheduleSyncCardInsertTriggers();
     }
 
     function clearTextSelection() {
@@ -1485,6 +1488,197 @@ document.addEventListener('DOMContentLoaded', async () => {
             pendingShotGroupFrameRaf = null;
             renderShotGroupFrames(storyboardGrid);
         });
+        scheduleSyncCardInsertTriggers();
+    }
+
+    const CARD_INSERT_TRIGGER_SIZE = 18;
+    const CARD_INSERT_TRIGGER_PADDING = 2;
+    const cardInsertSerials = new WeakMap();
+    let cardInsertSerialSeed = 0;
+
+    function getCardInsertSerial(card) {
+        let serial = cardInsertSerials.get(card);
+        if (!serial) {
+            cardInsertSerialSeed += 1;
+            serial = cardInsertSerialSeed;
+            cardInsertSerials.set(card, serial);
+        }
+        return serial;
+    }
+
+    function ensureCardInsertLayer() {
+        if (cardInsertLayer && cardInsertLayer.isConnected && cardInsertLayer.parentElement === storyboardGrid) {
+            return cardInsertLayer;
+        }
+        const layer = document.createElement('div');
+        layer.className = 'card-insert-layer';
+        layer.addEventListener('click', handleCardInsertTriggerClick);
+        storyboardGrid.insertBefore(layer, storyboardGrid.firstChild);
+        cardInsertLayer = layer;
+        return layer;
+    }
+
+    function buildCardInsertTriggers() {
+        const domCards = Array.from(storyboardGrid.children)
+            .filter((item) => item.classList.contains('shot-card'));
+        const visibleEntries = domCards
+            .map((card, domIndex) => ({ card, domIndex }))
+            .filter(({ card }) => card.offsetParent !== null)
+            .map(({ card, domIndex }) => ({
+                card,
+                domIndex,
+                left: card.offsetLeft,
+                top: card.offsetTop,
+                right: card.offsetLeft + card.offsetWidth,
+                bottom: card.offsetTop + card.offsetHeight
+            }))
+            .sort((left, right) => left.top - right.top || left.left - right.left);
+        if (visibleEntries.length === 0) {
+            return { triggers: [], signature: '' };
+        }
+
+        const rowTolerance = 3;
+        const rows = [];
+        visibleEntries.forEach((entry) => {
+            let row = rows.find((candidate) => Math.abs(candidate.top - entry.top) <= rowTolerance);
+            if (!row) {
+                row = { entries: [] };
+                rows.push(row);
+            }
+            row.entries.push(entry);
+        });
+        rows.sort((left, right) => left.entries[0].top - right.entries[0].top);
+        rows.forEach((row) => {
+            row.entries.sort((left, right) => left.left - right.left);
+            row.top = Math.min(...row.entries.map((entry) => entry.top));
+            row.bottom = Math.max(...row.entries.map((entry) => entry.bottom));
+            row.left = row.entries[0].left;
+            row.right = row.entries[row.entries.length - 1].right;
+        });
+
+        const columnGap = Number.parseFloat(window.getComputedStyle(storyboardGrid).columnGap) || 20;
+        const zoneWidth = columnGap + CARD_INSERT_TRIGGER_PADDING;
+        const triggers = [];
+
+        rows.forEach((row, rowIndex) => {
+            const zoneTop = row.top;
+            const zoneHeight = Math.max(row.bottom - row.top, CARD_INSERT_TRIGGER_SIZE);
+            row.entries.forEach((entry, entryIndex) => {
+                // 行首卡片用自身左侧的空隙，其余卡片用与前一张卡片之间的空隙
+                const centerX = entryIndex === 0
+                    ? row.left - columnGap / 2
+                    : (row.entries[entryIndex - 1].right + entry.left) / 2;
+                triggers.push({
+                    anchorCardIndex: entry.domIndex,
+                    left: centerX - zoneWidth / 2,
+                    top: zoneTop,
+                    width: zoneWidth,
+                    height: zoneHeight
+                });
+            });
+
+            // 行末卡片右侧的加号与下一行行首的加号指向同一个插入位置
+            const nextRow = rows[rowIndex + 1] || null;
+            const trailingCenterX = row.right + columnGap / 2;
+            triggers.push({
+                anchorCardIndex: nextRow ? nextRow.entries[0].domIndex : null,
+                left: trailingCenterX - zoneWidth / 2,
+                top: zoneTop,
+                width: zoneWidth,
+                height: zoneHeight
+            });
+        });
+
+        const signature = triggers
+            .map((trigger) => [
+                trigger.anchorCardIndex === null
+                    ? 'end'
+                    : getCardInsertSerial(domCards[trigger.anchorCardIndex]),
+                Math.round(trigger.left),
+                Math.round(trigger.top),
+                Math.round(trigger.width),
+                Math.round(trigger.height)
+            ].join(':'))
+            .join('|');
+        return { triggers, signature };
+    }
+
+    function createCardInsertTriggerElement(trigger) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'card-insert-trigger';
+        button.disabled = editorReadOnly;
+        button.tabIndex = -1;
+        button.setAttribute('aria-label', '在此处新增分镜');
+        button.dataset.anchorCardIndex = trigger.anchorCardIndex === null ? '' : String(trigger.anchorCardIndex);
+        button.style.left = `${Math.round(trigger.left)}px`;
+        button.style.top = `${Math.round(trigger.top)}px`;
+        button.style.width = `${Math.round(trigger.width)}px`;
+        button.style.height = `${Math.round(trigger.height)}px`;
+        button.innerHTML = '<span class="card-insert-trigger-dot" aria-hidden="true">'
+            + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"'
+            + '><path d="M12 4.5v15M4.5 12h15" /></svg></span>';
+        return button;
+    }
+
+    function renderCardInsertTriggers() {
+        if (!storyboardGrid) {
+            return;
+        }
+        const layer = ensureCardInsertLayer();
+        const { triggers, signature } = buildCardInsertTriggers();
+        if (layer.dataset.signature === signature) {
+            return;
+        }
+        layer.dataset.signature = signature;
+        const fragment = document.createDocumentFragment();
+        triggers.forEach((trigger) => {
+            fragment.appendChild(createCardInsertTriggerElement(trigger));
+        });
+        layer.replaceChildren(fragment);
+    }
+
+    function scheduleSyncCardInsertTriggers() {
+        if (pendingCardInsertRaf) {
+            cancelAnimationFrame(pendingCardInsertRaf);
+        }
+        pendingCardInsertRaf = requestAnimationFrame(() => {
+            pendingCardInsertRaf = null;
+            renderCardInsertTriggers();
+        });
+    }
+
+    function insertShotBeforeCard(anchorCard) {
+        if (editorReadOnly || isMultiSelectMode) {
+            return;
+        }
+        const beforeNode = anchorCard
+            && anchorCard.isConnected
+            && anchorCard.parentElement === storyboardGrid
+            ? anchorCard
+            : null;
+        if (anchorCard && !beforeNode) {
+            scheduleSyncCardInsertTriggers();
+            return;
+        }
+        const newCard = addShot(true, null, { beforeNode });
+        newCard?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+
+    function handleCardInsertTriggerClick(event) {
+        const trigger = event.target instanceof Element
+            ? event.target.closest('.card-insert-trigger')
+            : null;
+        if (!trigger || trigger.parentElement !== cardInsertLayer) {
+            return;
+        }
+        event.preventDefault();
+        const anchorCardIndex = trigger.dataset.anchorCardIndex || '';
+        const anchorCard = anchorCardIndex === ''
+            ? null
+            : (Array.from(storyboardGrid.children)
+                .filter((item) => item.classList.contains('shot-card'))[Number(anchorCardIndex)] || null);
+        insertShotBeforeCard(anchorCard);
     }
 
     function getShotGroupUnitIdFromPointerTarget(target) {
@@ -2130,7 +2324,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const trigger = ensureSceneDividerTrigger();
         const firstContentItem = Array.from(storyboardGrid.children).find((child) => (
-            child !== trigger && !child.classList.contains('shot-group-frame-layer')
+            child !== trigger
+            && !child.classList.contains('shot-group-frame-layer')
+            && !child.classList.contains('card-insert-layer')
         ));
         if (firstContentItem && firstContentItem.classList.contains('scene-divider')) {
             return false;
@@ -2188,7 +2384,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     function prependStoryboardItem(node) {
         const trigger = ensureSceneDividerTrigger();
         const firstContentChild = Array.from(storyboardGrid.children).find((child) => (
-            child !== trigger && !child.classList.contains('shot-group-frame-layer')
+            child !== trigger
+            && !child.classList.contains('shot-group-frame-layer')
+            && !child.classList.contains('card-insert-layer')
         ));
         if (firstContentChild) {
             storyboardGrid.insertBefore(node, firstContentChild);
@@ -3760,6 +3958,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             hoveredImageUploadContext = null;
             storyboardGrid.innerHTML = '';
             sceneDividerTriggerEl = null;
+            cardInsertLayer = null;
             shotCount = 0;
             const shots = Array.isArray(project.shots) ? project.shots : [];
             if (shots.length === 0) {
@@ -3878,8 +4077,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             .find((value) => normalizedLegacyText.includes(value)) || '';
     }
 
-    function addShot(animate = true, shotData = null) {
+    function addShot(animate = true, shotData = null, options = {}) {
         const perfStartedAt = perfNow();
+        const { beforeNode = null } = options;
         const perfMeta = {
             animate: Boolean(animate),
             hasShotData: Boolean(shotData),
@@ -4224,7 +4424,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         syncShotTimeInputSizer();
 
-        appendStoryboardItem(clone);
+        if (beforeNode && beforeNode.parentElement === storyboardGrid) {
+            storyboardGrid.insertBefore(clone, beforeNode);
+        } else {
+            appendStoryboardItem(clone);
+        }
 
         if (animate) {
             card.style.opacity = '0';
@@ -4243,6 +4447,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             perfMeta.totalCards = storyboardGrid.querySelectorAll('.shot-card').length;
         }
         perfRecord('addShot', perfNow() - perfStartedAt, perfMeta);
+        return card;
     }
 
     document.addEventListener('paste', (e) => {

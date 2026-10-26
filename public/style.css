@@ -2111,6 +2111,64 @@ html.preload-view-editor #editor-view.hidden {
     display: none !important;
 }
 
+/* Card Insert Trigger */
+.card-insert-layer {
+    position: absolute;
+    inset: 0;
+    z-index: 4;
+    pointer-events: none;
+}
+
+.card-insert-trigger {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: none;
+    background: transparent;
+    pointer-events: auto;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.16s ease;
+}
+
+.card-insert-trigger-dot {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    border: 1px solid var(--border-color);
+    background: var(--card-bg);
+    color: var(--text-muted);
+    transition: transform 0.16s ease, color 0.16s ease, border-color 0.16s ease;
+}
+
+.card-insert-trigger-dot svg {
+    width: 11px;
+    height: 11px;
+}
+
+.card-insert-trigger:hover,
+.card-insert-trigger:focus-visible {
+    opacity: 1;
+}
+
+.card-insert-trigger:hover .card-insert-trigger-dot,
+.card-insert-trigger:focus-visible .card-insert-trigger-dot {
+    color: var(--primary-color);
+    border-color: var(--primary-color);
+    transform: scale(1.06);
+}
+
+.storyboard-grid.is-multi-select > .card-insert-layer,
+.storyboard-grid.is-sorting > .card-insert-layer,
+.editor-view.is-readonly .card-insert-layer {
+    display: none;
+}
+
 /* Shot Card */
 .shot-card {
     background: var(--card-bg);
