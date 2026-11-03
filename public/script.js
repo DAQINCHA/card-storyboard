@@ -3234,17 +3234,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function paginatePrintCards(cards, columnCount = 5, rowCount = 2) {
         const pageCapacity = columnCount * rowCount;
-        const units = [];
-        cards.forEach((card) => {
-            const shotUnitId = isShotCardGrouped(card) ? getShotCardUnitId(card) : '';
-            const previousUnit = units[units.length - 1];
-            if (shotUnitId && previousUnit?.shotUnitId === shotUnitId) {
-                previousUnit.cards.push(card);
-                return;
-            }
-            units.push({ shotUnitId, cards: [card] });
-        });
-
         const pages = [];
         let pageEntries = [];
         let nextSlot = 0;
@@ -3256,19 +3245,14 @@ document.addEventListener('DOMContentLoaded', async () => {
             nextSlot = 0;
         };
 
-        units.forEach((unit) => {
-            const unitSize = unit.cards.length;
-            // 卡片组不再整组挪到下一行：排到行尾就自然换行，只保证不跨页。
-            if (nextSlot >= pageCapacity || nextSlot + unitSize > pageCapacity) {
-                flushPage();
-            }
-            unit.cards.forEach((card) => {
-                pageEntries.push({ card, slotIndex: nextSlot });
-                nextSlot += 1;
-            });
+        // 卡片按顺序一张张往下排，排满一页就翻页。
+        // 卡片组不再被整体挪行或挪页，可以跨行、也可以跨页。
+        cards.forEach((card) => {
             if (nextSlot >= pageCapacity) {
                 flushPage();
             }
+            pageEntries.push({ card, slotIndex: nextSlot });
+            nextSlot += 1;
         });
         flushPage();
         return pages;
