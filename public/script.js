@@ -1135,103 +1135,25 @@ document.addEventListener('DOMContentLoaded', async () => {
         return Boolean(card?.classList?.contains('shot-grouped'));
     }
 
-    const SHOT_GROUP_FRAME_STROKE_WIDTH = 1.5;
+    // 外框描边宽度：与 CSS 里 .shot-group-frame-seg 的 border-width 保持一致
+    const SHOT_GROUP_FRAME_BORDER_WIDTH = 1.5;
 
-    // 外框圆角必须跟"卡片自己的圆角"一致：优先量一张没编组的卡片，
-    // 全都编组时退回主题变量 --shot-card-radius（主题改了卡片圆角要同步改它）
-    function getShotGroupCornerRadius(grid) {
-        const sampleCard = grid
-            ? grid.querySelector(':scope > .shot-card:not(.shot-grouped)')
-            : null;
-        if (sampleCard) {
-            const cardRadius = Number.parseFloat(window.getComputedStyle(sampleCard).borderTopLeftRadius);
-            if (Number.isFinite(cardRadius) && cardRadius > 0) {
-                return cardRadius;
-            }
-        }
-        const rawValue = window.getComputedStyle(grid || document.documentElement)
-            .getPropertyValue('--shot-card-radius');
-        const radius = Number.parseFloat(rawValue);
-        return Number.isFinite(radius) && radius > 0 ? radius : 12;
-    }
-
-    function formatShotGroupCoordinate(value) {
-        return String(Math.round(value * 100) / 100);
-    }
-
-    // 组的填充轮廓：始终是一个闭合图形，跨行断开的那个侧面不做圆角
-    function buildShotGroupFillPath(rect, radius, openEdges) {
-        const format = formatShotGroupCoordinate;
-        const leftRadius = openEdges.left ? 0 : radius;
-        const rightRadius = openEdges.right ? 0 : radius;
-        const commands = [
-            `M ${format(rect.left + leftRadius)} ${format(rect.top)}`,
-            `L ${format(rect.right - rightRadius)} ${format(rect.top)}`
-        ];
-        if (rightRadius > 0) {
-            commands.push(`Q ${format(rect.right)} ${format(rect.top)} ${format(rect.right)} ${format(rect.top + rightRadius)}`);
-        }
-        commands.push(`L ${format(rect.right)} ${format(rect.bottom - rightRadius)}`);
-        if (rightRadius > 0) {
-            commands.push(`Q ${format(rect.right)} ${format(rect.bottom)} ${format(rect.right - rightRadius)} ${format(rect.bottom)}`);
-        }
-        commands.push(`L ${format(rect.left + leftRadius)} ${format(rect.bottom)}`);
-        if (leftRadius > 0) {
-            commands.push(`Q ${format(rect.left)} ${format(rect.bottom)} ${format(rect.left)} ${format(rect.bottom - leftRadius)}`);
-        }
-        commands.push(`L ${format(rect.left)} ${format(rect.top + leftRadius)}`);
-        if (leftRadius > 0) {
-            commands.push(`Q ${format(rect.left)} ${format(rect.top)} ${format(rect.left + leftRadius)} ${format(rect.top)}`);
-        }
-        commands.push('Z');
-        return commands.join(' ');
-    }
-
-    // 组的外框描边：开放的一侧不画线，跨行时外框在行尾 / 行首断开
-    function buildShotGroupStrokePath(rect, radius, openEdges) {
-        const format = formatShotGroupCoordinate;
-        const leftRadius = openEdges.left ? 0 : radius;
-        const rightRadius = openEdges.right ? 0 : radius;
-        const commands = [];
-        commands.push(openEdges.left
-            ? `M ${format(rect.left)} ${format(rect.top)}`
-            : `M ${format(rect.left + leftRadius)} ${format(rect.top)}`);
-        commands.push(`L ${format(rect.right - rightRadius)} ${format(rect.top)}`);
-        if (rightRadius > 0) {
-            commands.push(`Q ${format(rect.right)} ${format(rect.top)} ${format(rect.right)} ${format(rect.top + rightRadius)}`);
-        }
-        if (openEdges.right) {
-            commands.push(`M ${format(rect.right)} ${format(rect.bottom)}`);
-        } else {
-            commands.push(`L ${format(rect.right)} ${format(rect.bottom - rightRadius)}`);
-        }
-        if (rightRadius > 0) {
-            commands.push(`Q ${format(rect.right)} ${format(rect.bottom)} ${format(rect.right - rightRadius)} ${format(rect.bottom)}`);
-        }
-        commands.push(`L ${format(rect.left + leftRadius)} ${format(rect.bottom)}`);
-        if (leftRadius > 0) {
-            commands.push(`Q ${format(rect.left)} ${format(rect.bottom)} ${format(rect.left)} ${format(rect.bottom - leftRadius)}`);
-        }
-        if (!openEdges.left) {
-            commands.push(`L ${format(rect.left)} ${format(rect.top + leftRadius)}`);
-            if (leftRadius > 0) {
-                commands.push(`Q ${format(rect.left)} ${format(rect.top)} ${format(rect.left + leftRadius)} ${format(rect.top)}`);
-            }
-        }
-        return commands.join(' ');
-    }
-
-    // 按行把组内的卡片切成一段段，每段画一圈外框；换行就断成两段
-    function buildShotGroupRows(cards) {
+    // 按行把组内的卡片切成一段段，每段一个外框；卡片换行时断成两段。
+    // 用 getBoundingClientRect 而不是 offsetLeft/offsetWidth：后两者是整数，
+    // 卡片在网格里常带小数坐标，取整会让外框偏出 0.5~1px（边框被卡片盖住或露缝）
+    function buildShotGroupRows(cards, originRect) {
         const visibleEntries = cards
             .filter((card) => card && card.offsetParent !== null)
-            .map((card) => ({
-                card,
-                left: card.offsetLeft,
-                top: card.offsetTop,
-                right: card.offsetLeft + card.offsetWidth,
-                bottom: card.offsetTop + card.offsetHeight
-            }))
+            .map((card) => {
+                const rect = card.getBoundingClientRect();
+                return {
+                    card,
+                    left: rect.left - originRect.left,
+                    top: rect.top - originRect.top,
+                    right: rect.right - originRect.left,
+                    bottom: rect.bottom - originRect.top
+                };
+            })
             .sort((left, right) => left.top - right.top || left.left - right.left);
         if (visibleEntries.length === 0) {
             return [];
@@ -1252,51 +1174,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         return rows.map((row) => {
             row.entries.sort((left, right) => left.left - right.left);
             return {
-                left: Math.round(Math.min(...row.entries.map((entry) => entry.left))),
-                top: Math.round(Math.min(...row.entries.map((entry) => entry.top))),
-                right: Math.round(Math.max(...row.entries.map((entry) => entry.right))),
-                bottom: Math.round(Math.max(...row.entries.map((entry) => entry.bottom))),
-                entries: row.entries,
+                left: Math.min(...row.entries.map((entry) => entry.left)),
+                top: Math.min(...row.entries.map((entry) => entry.top)),
+                right: Math.max(...row.entries.map((entry) => entry.right)),
+                bottom: Math.max(...row.entries.map((entry) => entry.bottom)),
                 cards: row.entries.map((entry) => entry.card)
             };
         });
-    }
-
-    // 组里换行时，行尾卡片右侧、下一行首张卡片左侧各补一小条斜线，表示这组还在继续
-    function buildShotGroupWrapBands(rows, fallbackGap = 20) {
-        if (rows.length < 2) {
-            return [];
-        }
-        const rowGaps = [];
-        rows.forEach((row) => {
-            for (let index = 1; index < row.entries.length; index += 1) {
-                const gapWidth = row.entries[index].left - row.entries[index - 1].right;
-                if (gapWidth > 0) {
-                    rowGaps.push(gapWidth);
-                }
-            }
-        });
-        const columnGap = rowGaps.length > 0 ? Math.min(...rowGaps) : fallbackGap;
-        const bandWidth = Math.max(4, Math.round(columnGap / 2));
-
-        const bands = [];
-        for (let index = 1; index < rows.length; index += 1) {
-            const lastEntry = rows[index - 1].entries[rows[index - 1].entries.length - 1];
-            const firstEntry = rows[index].entries[0];
-            bands.push({
-                left: lastEntry.right,
-                top: lastEntry.top,
-                right: lastEntry.right + bandWidth,
-                bottom: lastEntry.bottom
-            });
-            bands.push({
-                left: firstEntry.left - bandWidth,
-                top: firstEntry.top,
-                right: firstEntry.left,
-                bottom: firstEntry.bottom
-            });
-        }
-        return bands;
     }
 
     function renderShotGroupFrames(grid) {
@@ -1305,7 +1189,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         grid.querySelectorAll(':scope > .shot-group-frame-layer').forEach((layer) => layer.remove());
         grid.querySelectorAll(':scope > .shot-card').forEach((card) => {
-            card.classList.remove('is-group-first', 'is-group-edge-start', 'is-group-edge-end');
+            card.classList.remove('is-group-first', 'is-group-edge-start', 'is-group-edge-end', 'is-group-hovered');
         });
 
         const cardsByUnitId = new Map();
@@ -1323,40 +1207,19 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
-        const svgNamespace = 'http://www.w3.org/2000/svg';
-        const layer = document.createElementNS(svgNamespace, 'svg');
-        const width = Math.max(grid.clientWidth, grid.scrollWidth);
-        const height = Math.max(grid.clientHeight, grid.scrollHeight);
+        const layer = document.createElement('div');
         layer.classList.add('shot-group-frame-layer');
-        layer.setAttribute('width', String(width));
-        layer.setAttribute('height', String(height));
-        layer.setAttribute('viewBox', `0 0 ${width} ${height}`);
         layer.setAttribute('aria-hidden', 'true');
+        // 先把图层挂上去，才能用它的 rect 作为坐标原点（= 网格内容区左上角）
+        grid.insertBefore(layer, grid.firstChild);
+        const originRect = layer.getBoundingClientRect();
 
-        const hatchPatternId = 'shot-group-hatch-pattern';
-        const definitions = document.createElementNS(svgNamespace, 'defs');
-        const hatchPattern = document.createElementNS(svgNamespace, 'pattern');
-        hatchPattern.setAttribute('id', hatchPatternId);
-        hatchPattern.setAttribute('width', '4');
-        hatchPattern.setAttribute('height', '4');
-        hatchPattern.setAttribute('patternUnits', 'userSpaceOnUse');
-        hatchPattern.setAttribute('patternTransform', 'rotate(45)');
-        // 先铺一层不透明底色，免得背后的金色投影从斜线缝隙里透出来
-        const hatchBase = document.createElementNS(svgNamespace, 'rect');
-        hatchBase.classList.add('shot-group-hatch-base');
-        hatchBase.setAttribute('width', '4');
-        hatchBase.setAttribute('height', '4');
-        hatchPattern.appendChild(hatchBase);
-        const hatchStripe = document.createElementNS(svgNamespace, 'rect');
-        hatchStripe.classList.add('shot-group-hatch-stripe');
-        hatchStripe.setAttribute('width', '1.5');
-        hatchStripe.setAttribute('height', '4');
-        hatchPattern.appendChild(hatchStripe);
-        definitions.appendChild(hatchPattern);
-        layer.appendChild(definitions);
-
-        const cornerRadius = getShotGroupCornerRadius(grid);
-        const strokeOffset = SHOT_GROUP_FRAME_STROKE_WIDTH / 2;
+        // 上面已经把 is-group-hovered 清掉，此时量到的是卡片静止位置；
+        // 否则悬停时卡片带 translate(-1px,-1px)，外框会被量偏
+        const rowsByUnitId = new Map();
+        cardsByUnitId.forEach((cards, shotUnitId) => {
+            rowsByUnitId.set(shotUnitId, buildShotGroupRows(cards, originRect));
+        });
 
         cardsByUnitId.forEach((cards, shotUnitId) => {
             cards.forEach((card, index) => card.classList.toggle('is-group-first', index === 0));
@@ -1365,83 +1228,34 @@ document.addEventListener('DOMContentLoaded', async () => {
                 && (hoveredShotUnitId === shotUnitId || cards.some((card) => card.matches(':hover')));
             cards.forEach((card) => card.classList.toggle('is-group-hovered', isHovered));
 
-            const rows = buildShotGroupRows(cards);
+            const rows = rowsByUnitId.get(shotUnitId) || [];
             if (rows.length === 0) {
                 return;
             }
 
-            const body = document.createElementNS(svgNamespace, 'g');
+            const body = document.createElement('div');
             body.classList.add('shot-group-frame-body');
             body.classList.toggle('is-hovered', isHovered);
             body.dataset.shotUnitId = shotUnitId;
-            const shadowPaths = [];
 
-            buildShotGroupWrapBands(rows).forEach((band) => {
-                const bandRect = {
-                    left: band.left,
-                    top: band.top,
-                    right: band.right,
-                    bottom: band.bottom
-                };
-                const bandPath = document.createElementNS(svgNamespace, 'path');
-                bandPath.classList.add('shot-group-wrap-band');
-                bandPath.setAttribute('fill', `url(#${hatchPatternId})`);
-                bandPath.setAttribute('d', buildShotGroupFillPath(bandRect, 0, { left: false, right: false }));
-                body.appendChild(bandPath);
+            rows.forEach((row) => {
+                // 每段首尾卡片的圆角比外框外沿小一个描边宽度，正好贴住边框内沿
+                row.cards[0].classList.add('is-group-edge-start');
+                row.cards[row.cards.length - 1].classList.add('is-group-edge-end');
+
+                // 外框用普通 div + CSS 边框：和卡片自己的边框同一套渲染，粗细、圆角都不会有偏差
+                const frame = document.createElement('div');
+                frame.classList.add('shot-group-frame-seg');
+                frame.dataset.shotUnitId = shotUnitId;
+                frame.style.left = `${row.left - SHOT_GROUP_FRAME_BORDER_WIDTH}px`;
+                frame.style.top = `${row.top - SHOT_GROUP_FRAME_BORDER_WIDTH}px`;
+                frame.style.width = `${row.right - row.left + SHOT_GROUP_FRAME_BORDER_WIDTH * 2}px`;
+                frame.style.height = `${row.bottom - row.top + SHOT_GROUP_FRAME_BORDER_WIDTH * 2}px`;
+                body.appendChild(frame);
             });
 
-            rows.forEach((row, rowIndex) => {
-                // 跨行时外框在行尾 / 行首断开，靠在一起的那一侧不封口
-                const openEdges = {
-                    left: rowIndex > 0,
-                    right: rowIndex < rows.length - 1
-                };
-                if (!openEdges.left) {
-                    row.cards[0].classList.add('is-group-edge-start');
-                }
-                if (!openEdges.right) {
-                    row.cards[row.cards.length - 1].classList.add('is-group-edge-end');
-                }
-
-                const frameRect = {
-                    left: row.left - strokeOffset,
-                    top: row.top - strokeOffset,
-                    right: row.right + strokeOffset,
-                    bottom: row.bottom + strokeOffset
-                };
-                // 外框外沿的弧度 = 卡片圆角；描边向外让出的半个线宽从半径里扣掉
-                const frameRadius = Math.max(0, cornerRadius - strokeOffset);
-                const fillPathData = buildShotGroupFillPath(frameRect, frameRadius, openEdges);
-                const strokePathData = buildShotGroupStrokePath(frameRect, frameRadius, openEdges);
-
-                const shadow = document.createElementNS(svgNamespace, 'path');
-                shadow.classList.add('shot-group-shadow-path');
-                shadow.classList.toggle('is-hovered', isHovered);
-                shadow.dataset.shotUnitId = shotUnitId;
-                shadow.setAttribute('d', fillPathData);
-                shadowPaths.push(shadow);
-
-                const fill = document.createElementNS(svgNamespace, 'path');
-                fill.classList.add('shot-group-frame-fill');
-                fill.dataset.shotUnitId = shotUnitId;
-                fill.setAttribute('fill', `url(#${hatchPatternId})`);
-                fill.setAttribute('d', fillPathData);
-
-                const stroke = document.createElementNS(svgNamespace, 'path');
-                stroke.classList.add('shot-group-frame-stroke');
-                stroke.setAttribute('d', strokePathData);
-
-                body.appendChild(fill);
-                body.appendChild(stroke);
-            });
-
-            shadowPaths.forEach((shadow) => layer.appendChild(shadow));
             layer.appendChild(body);
         });
-
-        if (layer.childNodes.length > 1) {
-            grid.insertBefore(layer, grid.firstChild);
-        }
     }
 
     function scheduleSyncShotGroupFrames() {

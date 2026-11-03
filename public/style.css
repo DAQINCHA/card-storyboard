@@ -2209,10 +2209,12 @@ html.preload-view-editor #editor-view.hidden {
     box-shadow: none;
 }
 
-/* 镜头组：整组共用一圈外框，组内卡片不再各自描边 */
+/* 镜头组：整组共用一圈外框，组内卡片不再各自描边。
+   卡片内缩 1.5px 把位置让给外框那圈边框，整组外轮廓就正好等于单张卡片的盒子 */
 #storyboard-grid > .shot-card.shot-grouped {
     border: none;
     border-radius: 0;
+    margin: 1.5px;
 }
 
 /* 组外框首尾卡片的圆角：比外框最外沿小一个描边宽度，正好贴住边框内沿 */
@@ -2238,31 +2240,17 @@ html.preload-view-editor #editor-view.hidden {
     margin-left: auto;
 }
 
+/* 镜头组外框：普通 div + CSS 边框，和卡片自己的边框用同一套渲染，粗细不会因抗锯齿变细 */
 .shot-group-frame-layer {
     position: absolute;
-    top: 0;
-    left: 0;
+    inset: 0;
     z-index: 0;
-    overflow: visible;
-    color: var(--shot-card-shadow-color);
-    pointer-events: none;
-}
-
-/* 外框底色 + 斜线：卡片之间的缝隙由它填满 */
-.shot-group-frame-fill {
-    pointer-events: all;
-}
-
-.shot-group-frame-stroke {
-    fill: none;
-    stroke: var(--shot-group-connector-color);
-    stroke-width: 1.5;
     pointer-events: none;
 }
 
 .shot-group-frame-body {
-    transform: translate(0, 0);
-    transform-origin: 0 0;
+    position: absolute;
+    inset: 0;
     transition: transform 0.3s ease;
 }
 
@@ -2270,29 +2258,32 @@ html.preload-view-editor #editor-view.hidden {
     transform: translate(-1px, -1px);
 }
 
-.shot-group-shadow-path {
-    fill: currentColor;
-    stroke: none;
-    transform: translate(5px, 5px);
-    transform-origin: 0 0;
-    transition: transform 0.3s ease;
+.shot-group-frame-seg {
+    position: absolute;
+    box-sizing: border-box;
+    border: 1.5px solid var(--shot-group-connector-color);
+    border-radius: var(--shot-card-radius);
+    /* 底色 + 45° 斜线：卡片之间的缝隙由它填满 */
+    background:
+        repeating-linear-gradient(45deg,
+            var(--shot-group-connector-color),
+            var(--shot-group-connector-color) 1.5px,
+            transparent 1.5px,
+            transparent 4px),
+        var(--bg-color);
+    box-shadow: 5px 5px 0 var(--shot-card-shadow-color);
+    overflow: hidden;
+    pointer-events: auto;
+    transition: box-shadow 0.3s ease;
 }
 
-.shot-group-shadow-path.is-hovered {
-    transform: translate(7px, 7px);
+.shot-group-frame-body.is-hovered .shot-group-frame-seg {
+    box-shadow: 7px 7px 0 var(--shot-card-shadow-color);
 }
 
 .storyboard-grid:not(.is-multi-select):not(.is-sorting) > .shot-card.shot-grouped.is-group-hovered:not(.sortable-drag):not(.sortable-chosen) {
     transform: translate(-1px, -1px);
     box-shadow: none;
-}
-
-.shot-group-hatch-base {
-    fill: var(--bg-color);
-}
-
-.shot-group-hatch-stripe {
-    fill: var(--shot-group-connector-color);
 }
 
 .storyboard-grid > .shot-card {
