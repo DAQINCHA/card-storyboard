@@ -1178,9 +1178,50 @@ document.addEventListener('DOMContentLoaded', async () => {
                 top: Math.min(...row.entries.map((entry) => entry.top)),
                 right: Math.max(...row.entries.map((entry) => entry.right)),
                 bottom: Math.max(...row.entries.map((entry) => entry.bottom)),
+                entries: row.entries,
                 cards: row.entries.map((entry) => entry.card)
             };
         });
+    }
+
+    // 组里换行时，行尾卡片右侧、下一行首卡左侧各伸出一条斜线带，标记"这组还在继续"
+    function buildShotGroupWrapBands(rows, borderWidth, fallbackGap = 20) {
+        if (rows.length < 2) {
+            return [];
+        }
+        const rowGaps = [];
+        rows.forEach((row) => {
+            for (let index = 1; index < row.entries.length; index += 1) {
+                const gapWidth = row.entries[index].left - row.entries[index - 1].right;
+                if (gapWidth > 0) {
+                    rowGaps.push(gapWidth);
+                }
+            }
+        });
+        const columnGap = rowGaps.length > 0 ? Math.min(...rowGaps) : fallbackGap;
+        const bandWidth = Math.max(4, Math.round(columnGap / 2));
+
+        const bands = [];
+        for (let index = 1; index < rows.length; index += 1) {
+            const previousRow = rows[index - 1];
+            const currentRow = rows[index];
+            const lastEntry = previousRow.entries[previousRow.entries.length - 1];
+            const firstEntry = currentRow.entries[0];
+            // 高度取外框的上下边界，正好把那一侧的边框盖住，看起来像外框"流出去"
+            bands.push({
+                left: lastEntry.right,
+                top: previousRow.top - borderWidth,
+                right: lastEntry.right + bandWidth,
+                bottom: previousRow.bottom + borderWidth
+            });
+            bands.push({
+                left: firstEntry.left - bandWidth,
+                top: currentRow.top - borderWidth,
+                right: firstEntry.left,
+                bottom: currentRow.bottom + borderWidth
+            });
+        }
+        return bands;
     }
 
     function renderShotGroupFrames(grid) {
@@ -1252,6 +1293,18 @@ document.addEventListener('DOMContentLoaded', async () => {
                 frame.style.width = `${row.right - row.left + SHOT_GROUP_FRAME_BORDER_WIDTH * 2}px`;
                 frame.style.height = `${row.bottom - row.top + SHOT_GROUP_FRAME_BORDER_WIDTH * 2}px`;
                 body.appendChild(frame);
+            });
+
+            // 换行处的斜线带最后画，压在外框线上，像外框顺着这一侧继续出去
+            buildShotGroupWrapBands(rows, SHOT_GROUP_FRAME_BORDER_WIDTH).forEach((band) => {
+                const bandEl = document.createElement('div');
+                bandEl.classList.add('shot-group-wrap-band');
+                bandEl.setAttribute('aria-hidden', 'true');
+                bandEl.style.left = `${band.left}px`;
+                bandEl.style.top = `${band.top}px`;
+                bandEl.style.width = `${band.right - band.left}px`;
+                bandEl.style.height = `${band.bottom - band.top}px`;
+                body.appendChild(bandEl);
             });
 
             layer.appendChild(body);

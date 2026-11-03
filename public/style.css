@@ -2281,6 +2281,19 @@ html.preload-view-editor #editor-view.hidden {
     box-shadow: 7px 7px 0 var(--shot-card-shadow-color);
 }
 
+/* 组内换行时伸出去的那条斜线：压在外框线上，标记这组还在下一行继续 */
+.shot-group-wrap-band {
+    position: absolute;
+    pointer-events: none;
+    background:
+        repeating-linear-gradient(45deg,
+            var(--shot-group-connector-color),
+            var(--shot-group-connector-color) 1.5px,
+            transparent 1.5px,
+            transparent 4px),
+        var(--bg-color);
+}
+
 .storyboard-grid:not(.is-multi-select):not(.is-sorting) > .shot-card.shot-grouped.is-group-hovered:not(.sortable-drag):not(.sortable-chosen) {
     transform: translate(-1px, -1px);
     box-shadow: none;
