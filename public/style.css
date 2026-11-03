@@ -4538,8 +4538,10 @@ body.is-sorting {
     /* Force a 5-column layout so each print page contains 2 rows of 5 cards */
     .print-grid {
         display: grid;
-        /* 最左边留一条半宽连接列，供卡片组换行时左侧那条带子落脚；每张卡片右边跟一条 6px 连接列 */
-        --print-wrap-band: 3px;
+        /* 首尾各留一条连接列，供卡片组换行时左右那两条斜线落脚；宽度与行内连接列一致，太窄会看不出斜线 */
+        --print-wrap-band: 6px;
+        /* 印刷版卡片圆角，镜头组外框按它对齐 */
+        --print-shot-radius: 4px;
         grid-template-columns: var(--print-wrap-band) repeat(4, minmax(0, 1fr) 6px) minmax(0, 1fr) var(--print-wrap-band);
         column-gap: 0;
         row-gap: 6px;
@@ -4549,10 +4551,38 @@ body.is-sorting {
     .shot-card {
         box-shadow: none;
         border: 1.5px solid #000;
-        border-radius: 4px;
+        border-radius: var(--print-shot-radius, 4px);
         /* remove large radius for print */
         break-inside: avoid;
         page-break-inside: avoid;
+    }
+
+    /* 镜头组：整组一圈外框，组内卡片不再描边。
+       边框保留但设为透明，卡片盒子尺寸不变，外框正好盖在这 1.5px 上 */
+    .print-grid > .shot-card.shot-grouped {
+        border-color: transparent;
+        border-radius: 0;
+    }
+
+    .print-grid > .shot-card.shot-grouped.is-print-run-start {
+        border-top-left-radius: calc(var(--print-shot-radius, 4px) - 1.5px);
+        border-bottom-left-radius: calc(var(--print-shot-radius, 4px) - 1.5px);
+    }
+
+    .print-grid > .shot-card.shot-grouped.is-print-run-end {
+        border-top-right-radius: calc(var(--print-shot-radius, 4px) - 1.5px);
+        border-bottom-right-radius: calc(var(--print-shot-radius, 4px) - 1.5px);
+    }
+
+    /* 组外框：按行分段，最后绘制压在卡片之上 */
+    .print-shot-group-frame {
+        box-sizing: border-box;
+        border: 1.5px solid #000;
+        border-radius: var(--print-shot-radius, 4px);
+        pointer-events: none;
+        z-index: 2;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
     }
 
     .print-grid > .shot-group-frame-layer {
@@ -4564,8 +4594,8 @@ body.is-sorting {
         align-self: stretch;
         justify-self: stretch;
         min-width: 0;
-        border-top: 1.5px solid #000;
-        border-bottom: 1.5px solid #000;
+        /* 上下两条线由组外框负责，这里只铺斜线 */
+        border: none;
         background: transparent;
         -webkit-print-color-adjust: exact;
         print-color-adjust: exact;
@@ -4579,14 +4609,11 @@ body.is-sorting {
         overflow: hidden;
     }
 
-    /* 换行处那两条竖着的带子：只占预留的空列，不压卡片内容 */
+    /* 换行处那两条竖着的带子：只占预留的空列，纯斜线不描边，和外框的线直接接上 */
     .print-shot-group-wrap-band {
         justify-self: start;
         width: var(--print-wrap-band);
-        border-top: none;
-        border-bottom: none;
-        border-left: 0.75px solid #000;
-        border-right: 0.75px solid #000;
+        border: none;
     }
 
     .print-shot-group-hatch-stripe {

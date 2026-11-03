@@ -3100,9 +3100,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    // PDF 里卡片组换行时，行尾卡片右边、下一行首卡左边各补一条半宽连接带。
+    // PDF 里卡片组换行时，行尾卡片右边、下一行首卡左边各补一条斜线带。
     // 两条都落在网格预留的空列里（右边用它后面那格连接列，左边用最左侧预留列），不压卡片内容。
-    function appendPrintShotGroupWrapBands(grid, entries, columnCount = 5) {
+    // continuation 用来处理「这一组被分页切断」的情况：本页最后一张连着下一页、本页第一张接着上一页。
+    function appendPrintShotGroupWrapBands(grid, entries, columnCount = 5, continuation = null) {
         for (let index = 1; index < entries.length; index += 1) {
             const previous = entries[index - 1];
             const current = entries[index];
@@ -3121,6 +3122,25 @@ document.addEventListener('DOMContentLoaded', async () => {
             appendPrintWrapBand(grid, shotUnitId, (previous.slotIndex % columnCount) * 2 + 3, previousRow + 1);
             appendPrintWrapBand(grid, shotUnitId, 1, currentRow + 1);
         }
+
+        if (!continuation || entries.length === 0) {
+            return;
+        }
+        const lastEntry = entries[entries.length - 1];
+        if (continuation.continuesOnNext && isShotCardGrouped(lastEntry.card)) {
+            const lastRow = Math.floor(lastEntry.slotIndex / columnCount);
+            appendPrintWrapBand(
+                grid,
+                getShotCardUnitId(lastEntry.card),
+                (lastEntry.slotIndex % columnCount) * 2 + 3,
+                lastRow + 1
+            );
+        }
+        const firstEntry = entries[0];
+        if (continuation.continuesFromPrevious && isShotCardGrouped(firstEntry.card)) {
+            const firstRow = Math.floor(firstEntry.slotIndex / columnCount);
+            appendPrintWrapBand(grid, getShotCardUnitId(firstEntry.card), 1, firstRow + 1);
+        }
     }
 
     function appendPrintWrapBand(grid, shotUnitId, gridColumn, gridRow) {
@@ -3132,6 +3152,61 @@ document.addEventListener('DOMContentLoaded', async () => {
         band.style.gridRow = String(gridRow);
         band.appendChild(createPrintConnectorSvg());
         grid.appendChild(band);
+    }
+
+    // 组的外框：每一行一段，跨度从首卡列到末卡列（含中间的连接列），最后画，压在卡片之上
+    function appendPrintShotGroupFrames(grid, entries, printCards, columnCount = 5) {
+        const segments = [];
+        let current = null;
+        entries.forEach(({ card, slotIndex }, entryIndex) => {
+            const shotUnitId = isShotCardGrouped(card) ? getShotCardUnitId(card) : '';
+            const row = Math.floor(slotIndex / columnCount);
+            const continuesSegment = shotUnitId
+                && current
+                && current.shotUnitId === shotUnitId
+                && current.row === row
+                && slotIndex === current.lastSlotIndex + 1;
+            if (continuesSegment) {
+                current.lastSlotIndex = slotIndex;
+                current.lastEntryIndex = entryIndex;
+                return;
+            }
+            current = shotUnitId
+                ? {
+                    shotUnitId,
+                    row,
+                    firstSlotIndex: slotIndex,
+                    lastSlotIndex: slotIndex,
+                    firstEntryIndex: entryIndex,
+                    lastEntryIndex: entryIndex
+                }
+                : null;
+            if (current) {
+                segments.push(current);
+            }
+        });
+
+        segments.forEach((segment) => {
+            // 段首段尾的卡片圆角比外框外沿小一个描边宽度，正好贴住边框内沿
+            const startCard = printCards[segment.firstEntryIndex];
+            const endCard = printCards[segment.lastEntryIndex];
+            if (startCard) {
+                startCard.classList.add('is-print-run-start');
+            }
+            if (endCard) {
+                endCard.classList.add('is-print-run-end');
+            }
+
+            const startColumn = (segment.firstSlotIndex % columnCount) * 2 + 2;
+            const endColumn = (segment.lastSlotIndex % columnCount) * 2 + 2;
+            const frame = document.createElement('div');
+            frame.className = 'print-shot-group-frame';
+            frame.dataset.shotUnitId = segment.shotUnitId;
+            frame.setAttribute('aria-hidden', 'true');
+            frame.style.gridColumn = `${startColumn} / ${endColumn + 1}`;
+            frame.style.gridRow = String(segment.row + 1);
+            grid.appendChild(frame);
+        });
     }
 
     function paginatePrintCards(cards, columnCount = 5, rowCount = 2) {
@@ -3160,7 +3235,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         return pages;
     }
 
-    function createPrintCard(card, printIndex) {
+    function createPrintCard(card, printIndex, options = {}) {
+        // 组内共用信息（SHOT#、时长、VFX）只印在组的第一张卡上，其余卡片留空标题条
+        const { isUnitFirst = true } = options;
         const cardClone = document.createElement('article');
         cardClone.className = 'shot-card';
         const shotUnitId = getShotCardUnitId(card);
@@ -3182,16 +3259,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const headerLeft = document.createElement('div');
         headerLeft.className = 'header-left-actions';
-        const shotNumber = document.createElement('div');
-        shotNumber.className = 'shot-number';
-        const sourceShotNumber = card.querySelector('.shot-index')?.textContent?.trim() || String(printIndex);
-        shotNumber.innerHTML = `SHOT #<span class="shot-index">${sourceShotNumber}</span>`;
-        headerLeft.appendChild(shotNumber);
+        if (isUnitFirst) {
+            const shotNumber = document.createElement('div');
+            shotNumber.className = 'shot-number';
+            const sourceShotNumber = card.querySelector('.shot-index')?.textContent?.trim() || String(printIndex);
+            shotNumber.innerHTML = `SHOT #<span class="shot-index">${sourceShotNumber}</span>`;
+            headerLeft.appendChild(shotNumber);
+        }
 
         const sourceTimeInput = card.querySelector('.shot-time-input');
         const timeRange = (sourceTimeInput?.value || '').trim();
         let headerCenter = null;
-        if (/\d/.test(timeRange)) {
+        if (isUnitFirst && /\d/.test(timeRange)) {
             headerCenter = document.createElement('div');
             headerCenter.className = 'header-center-actions';
             const printTimeValue = document.createElement('span');
@@ -3203,21 +3282,23 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const headerRight = document.createElement('div');
         headerRight.className = 'header-right-actions';
-        const sourceVfx = card.querySelector('.vfx-checkbox input[type="checkbox"]');
-        const shotVfx = document.createElement('div');
-        shotVfx.className = 'shot-vfx';
-        const vfxLabel = document.createElement('label');
-        vfxLabel.className = 'vfx-checkbox';
-        const vfxInput = document.createElement('input');
-        vfxInput.type = 'checkbox';
-        vfxInput.checked = Boolean(sourceVfx?.checked);
-        const vfxCircle = document.createElement('span');
-        vfxCircle.className = 'vfx-circle';
-        vfxLabel.appendChild(vfxInput);
-        vfxLabel.appendChild(vfxCircle);
-        vfxLabel.appendChild(document.createTextNode('VFX'));
-        shotVfx.appendChild(vfxLabel);
-        headerRight.appendChild(shotVfx);
+        if (isUnitFirst) {
+            const sourceVfx = card.querySelector('.vfx-checkbox input[type="checkbox"]');
+            const shotVfx = document.createElement('div');
+            shotVfx.className = 'shot-vfx';
+            const vfxLabel = document.createElement('label');
+            vfxLabel.className = 'vfx-checkbox';
+            const vfxInput = document.createElement('input');
+            vfxInput.type = 'checkbox';
+            vfxInput.checked = Boolean(sourceVfx?.checked);
+            const vfxCircle = document.createElement('span');
+            vfxCircle.className = 'vfx-circle';
+            vfxLabel.appendChild(vfxInput);
+            vfxLabel.appendChild(vfxCircle);
+            vfxLabel.appendChild(document.createTextNode('VFX'));
+            shotVfx.appendChild(vfxLabel);
+            headerRight.appendChild(shotVfx);
+        }
 
         header.appendChild(headerLeft);
         if (headerCenter) {
@@ -3286,7 +3367,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         return cardClone;
     }
 
-    function createPrintPage(entries, startIndex, headerSource, sceneLabel = '') {
+    function createPrintPage(entries, startIndex, headerSource, sceneLabel = '', continuation = null) {
         const page = document.createElement('section');
         page.className = 'print-page';
         const pageContent = document.createElement('div');
@@ -3320,14 +3401,28 @@ document.addEventListener('DOMContentLoaded', async () => {
         grid.className = 'storyboard-grid print-grid';
 
         const printColumnCount = 5;
+        // 组内共用信息只印在组的第一张卡上：先按文档顺序找出每个镜头组的第一张卡
+        const firstCardByUnitId = new Map();
+        storyboardGrid.querySelectorAll('.shot-card').forEach((card) => {
+            const unitId = getShotCardUnitId(card);
+            if (unitId && !firstCardByUnitId.has(unitId)) {
+                firstCardByUnitId.set(unitId, card);
+            }
+        });
+
+        const printCards = [];
         entries.forEach(({ card, slotIndex }, cardOffset) => {
-            const printCard = createPrintCard(card, startIndex + cardOffset + 1);
+            const unitId = getShotCardUnitId(card);
+            const isUnitFirst = !isShotCardGrouped(card) || firstCardByUnitId.get(unitId) === card;
+            const printCard = createPrintCard(card, startIndex + cardOffset + 1, { isUnitFirst });
             printCard.style.gridColumn = String((slotIndex % printColumnCount) * 2 + 2);
             printCard.style.gridRow = String(Math.floor(slotIndex / printColumnCount) + 1);
             grid.appendChild(printCard);
+            printCards.push(printCard);
         });
         appendPrintShotGroupConnectors(grid, entries, printColumnCount);
-        appendPrintShotGroupWrapBands(grid, entries, printColumnCount);
+        appendPrintShotGroupWrapBands(grid, entries, printColumnCount, continuation);
+        appendPrintShotGroupFrames(grid, entries, printCards, printColumnCount);
 
         pageContent.appendChild(grid);
         page.appendChild(pageContent);
@@ -3368,10 +3463,29 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         let printedCardCount = 0;
+        // 同一镜头组的卡片如果被分页切开，本页最后一张 / 第一张要各留一条延伸出去的斜线
+        const isSameShotUnit = (leftCard, rightCard) => Boolean(leftCard && rightCard)
+            && isShotCardGrouped(rightCard)
+            && getShotCardUnitId(leftCard) === getShotCardUnitId(rightCard);
+
         groupsToPrint.forEach((group) => {
             const printPagesForScene = paginatePrintCards(group.cards, 5, cardsPerPage / 5);
-            printPagesForScene.forEach((pageEntries) => {
-                pagesFragment.appendChild(createPrintPage(pageEntries, printedCardCount, headerSource, group.sceneLabel));
+            printPagesForScene.forEach((pageEntries, pageIndex) => {
+                const previousPageEntries = printPagesForScene[pageIndex - 1] || [];
+                const nextPageEntries = printPagesForScene[pageIndex + 1] || [];
+                const continuation = {
+                    continuesFromPrevious: isSameShotUnit(
+                        previousPageEntries[previousPageEntries.length - 1]?.card,
+                        pageEntries[0]?.card
+                    ),
+                    continuesOnNext: isSameShotUnit(
+                        pageEntries[pageEntries.length - 1]?.card,
+                        nextPageEntries[0]?.card
+                    )
+                };
+                pagesFragment.appendChild(
+                    createPrintPage(pageEntries, printedCardCount, headerSource, group.sceneLabel, continuation)
+                );
                 printedCardCount += pageEntries.length;
             });
         });
