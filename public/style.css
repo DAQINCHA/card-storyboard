@@ -4495,7 +4495,9 @@ body.is-sorting {
     /* Force a 5-column layout so each print page contains 2 rows of 5 cards */
     .print-grid {
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr) 6px) minmax(0, 1fr);
+        /* 最左边留一条半宽连接列，供卡片组换行时左侧那条带子落脚；每张卡片右边跟一条 6px 连接列 */
+        --print-wrap-band: 3px;
+        grid-template-columns: var(--print-wrap-band) repeat(4, minmax(0, 1fr) 6px) minmax(0, 1fr) var(--print-wrap-band);
         column-gap: 0;
         row-gap: 6px;
         width: 100%;
@@ -4532,6 +4534,16 @@ body.is-sorting {
         width: 100%;
         height: 100%;
         overflow: hidden;
+    }
+
+    /* 换行处那两条竖着的带子：只占预留的空列，不压卡片内容 */
+    .print-shot-group-wrap-band {
+        justify-self: start;
+        width: var(--print-wrap-band);
+        border-top: none;
+        border-bottom: none;
+        border-left: 0.75px solid #000;
+        border-right: 0.75px solid #000;
     }
 
     .print-shot-group-hatch-stripe {
@@ -4619,7 +4631,8 @@ body.is-sorting {
     }
 
     .print-pages[data-print-aspect="4/3"] .print-grid {
-        grid-template-columns: repeat(4, minmax(0, 1fr) 4px) minmax(0, 1fr);
+        --print-wrap-band: 2px;
+        grid-template-columns: var(--print-wrap-band) repeat(4, minmax(0, 1fr) 4px) minmax(0, 1fr) var(--print-wrap-band);
         column-gap: 0;
         row-gap: 4px;
     }

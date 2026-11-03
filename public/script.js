@@ -727,36 +727,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const startColumn = shouldCenterThisScene && sceneVisibleCount < targetColumns
                     ? Math.floor((targetColumns - sceneVisibleCount) / 2) + 1
                     : 1;
-                let nextColumn = startColumn;
-                let cardIndex = 0;
-                while (cardIndex < visibleSceneCards.length) {
-                    const firstCard = visibleSceneCards[cardIndex];
-                    const shotUnitId = isShotCardGrouped(firstCard) ? getShotCardUnitId(firstCard) : '';
-                    let unitSize = 1;
-                    if (shotUnitId) {
-                        while (
-                            cardIndex + unitSize < visibleSceneCards.length
-                            && getShotCardUnitId(visibleSceneCards[cardIndex + unitSize]) === shotUnitId
-                        ) {
-                            unitSize += 1;
-                        }
-                    }
-
-                    if (nextColumn > targetColumns) {
-                        nextColumn = 1;
-                    }
-                    const remainingColumns = targetColumns - nextColumn + 1;
-                    const moveWholeGroupToNextRow = unitSize <= targetColumns && unitSize > remainingColumns;
-                    if (moveWholeGroupToNextRow) {
-                        nextColumn = 1;
-                    }
-                    if (cardIndex === 0 || moveWholeGroupToNextRow) {
-                        firstCard.style.gridColumnStart = String(nextColumn);
-                    }
-
-                    nextColumn += unitSize;
-                    cardIndex += unitSize;
-                }
+                // 卡片组不再强制挤在同一行：只给这一场的第一张指定起始列，
+                // 其余交给网格自动排，排不下就在行尾自然换行，
+                // 换行处的连接带由 renderShotGroupFrames 补。
+                visibleSceneCards[0].style.gridColumnStart = String(startColumn);
                 visibleSceneCards = [];
             };
 
@@ -1318,32 +1292,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }));
         const rectangles = [...rowRects];
 
-        for (let index = 1; index < rowRects.length; index += 1) {
-            const previous = rowRects[index - 1];
-            const current = rowRects[index];
-            const overlapLeft = Math.max(previous.left, current.left);
-            const overlapRight = Math.min(previous.right, current.right);
-            let left;
-            let right;
-            if (overlapRight > overlapLeft) {
-                const center = (overlapLeft + overlapRight) / 2;
-                left = center - 5;
-                right = center + 5;
-            } else if (previous.right <= current.left) {
-                left = previous.right - 1;
-                right = current.left + 1;
-            } else {
-                left = current.right - 1;
-                right = previous.left + 1;
-            }
-            rectangles.push({
-                left,
-                top: Math.min(previous.bottom, current.top) - 1,
-                right,
-                bottom: Math.max(previous.bottom, current.top) + 1
-            });
-        }
-
+        // 换行时两行各自独立算投影，不再补行与行之间的连接块
         return rectangles.map((rect) => ({
             left: Math.round(rect.left),
             top: Math.round(rect.top),
@@ -1378,6 +1327,117 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
         }
         return gaps;
+    }
+
+    // 卡片组换行时，行尾卡片的右边、下一行首张卡片的左边，各补一条连接带。
+    // 宽度取正常连接线（卡片间距）的一半，长度等于卡片本身的高度，不伸进行间距。
+    function buildShotGroupWrapRectangles(cards, fallbackGap = 20) {
+        const visibleCards = cards
+            .filter((card) => card && card.offsetParent !== null)
+            .map((card) => ({
+                left: card.offsetLeft,
+                top: card.offsetTop,
+                right: card.offsetLeft + card.offsetWidth,
+                bottom: card.offsetTop + card.offsetHeight
+            }))
+            .sort((left, right) => left.top - right.top || left.left - right.left);
+        if (visibleCards.length < 2) {
+            return [];
+        }
+
+        const rowTolerance = 3;
+        const rows = [];
+        visibleCards.forEach((rect) => {
+            let row = rows.find((candidate) => Math.abs(candidate[0].top - rect.top) <= rowTolerance);
+            if (!row) {
+                row = [];
+                rows.push(row);
+            }
+            row.push(rect);
+        });
+        if (rows.length < 2) {
+            return [];
+        }
+        rows.forEach((row) => row.sort((left, right) => left.left - right.left));
+
+        const rowGaps = [];
+        rows.forEach((row) => {
+            for (let index = 1; index < row.length; index += 1) {
+                const gapWidth = row[index].left - row[index - 1].right;
+                if (gapWidth > 0) {
+                    rowGaps.push(gapWidth);
+                }
+            }
+        });
+        const columnGap = rowGaps.length > 0 ? Math.min(...rowGaps) : fallbackGap;
+        const bandWidth = Math.max(4, Math.round(columnGap / 2));
+
+        const rectangles = [];
+        for (let index = 1; index < rows.length; index += 1) {
+            const previousRow = rows[index - 1];
+            const currentRow = rows[index];
+            const lastCard = previousRow[previousRow.length - 1];
+            const firstCard = currentRow[0];
+            rectangles.push({
+                left: lastCard.right,
+                top: lastCard.top,
+                right: lastCard.right + bandWidth,
+                bottom: lastCard.bottom
+            });
+            rectangles.push({
+                left: firstCard.left - bandWidth,
+                top: firstCard.top,
+                right: firstCard.left,
+                bottom: firstCard.bottom
+            });
+        }
+
+        return rectangles.map((rect) => ({
+            left: Math.round(rect.left),
+            top: Math.round(rect.top),
+            right: Math.round(rect.right),
+            bottom: Math.round(rect.bottom)
+        }));
+    }
+
+    function appendShotGroupConnector(layer, rect, hatchPatternId, shotUnitId, isHovered) {
+        const svgNamespace = 'http://www.w3.org/2000/svg';
+        const connector = document.createElementNS(svgNamespace, 'g');
+        connector.classList.add('shot-group-connector');
+        connector.classList.toggle('is-hovered', isHovered);
+        connector.dataset.shotUnitId = shotUnitId;
+
+        const hatch = document.createElementNS(svgNamespace, 'rect');
+        hatch.classList.add('shot-group-hatch-connector');
+        hatch.setAttribute('x', String(rect.left));
+        hatch.setAttribute('y', String(rect.top));
+        hatch.setAttribute('width', String(rect.right - rect.left));
+        hatch.setAttribute('height', String(rect.bottom - rect.top));
+        hatch.setAttribute('fill', `url(#${hatchPatternId})`);
+        connector.appendChild(hatch);
+
+        // 竖着的带子把边线画在左右两侧，横着的画在上下两侧
+        const isVertical = (rect.bottom - rect.top) > (rect.right - rect.left);
+        const edges = isVertical
+            ? [
+                [rect.left + 0.75, rect.top, rect.left + 0.75, rect.bottom],
+                [rect.right - 0.75, rect.top, rect.right - 0.75, rect.bottom]
+            ]
+            : [
+                [rect.left, rect.top + 0.75, rect.right, rect.top + 0.75],
+                [rect.left, rect.bottom - 0.75, rect.right, rect.bottom - 0.75]
+            ];
+        edges.forEach(([x1, y1, x2, y2]) => {
+            const edge = document.createElementNS(svgNamespace, 'line');
+            edge.classList.add('shot-group-connector-edge');
+            edge.setAttribute('x1', String(x1));
+            edge.setAttribute('x2', String(x2));
+            edge.setAttribute('y1', String(y1));
+            edge.setAttribute('y2', String(y2));
+            connector.appendChild(edge);
+        });
+
+        layer.appendChild(connector);
     }
 
     function renderShotGroupFrames(grid) {
@@ -1447,31 +1507,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             layer.appendChild(offsetShadow);
 
             buildShotGroupGapRectangles(cards).forEach((gap) => {
-                const connector = document.createElementNS(svgNamespace, 'g');
-                connector.classList.add('shot-group-connector');
-                connector.classList.toggle('is-hovered', isHovered);
-                connector.dataset.shotUnitId = shotUnitId;
-
-                const hatch = document.createElementNS(svgNamespace, 'rect');
-                hatch.classList.add('shot-group-hatch-connector');
-                hatch.setAttribute('x', String(gap.left));
-                hatch.setAttribute('y', String(gap.top));
-                hatch.setAttribute('width', String(gap.right - gap.left));
-                hatch.setAttribute('height', String(gap.bottom - gap.top));
-                hatch.setAttribute('fill', `url(#${hatchPatternId})`);
-                connector.appendChild(hatch);
-
-                [gap.top + 0.75, gap.bottom - 0.75].forEach((y) => {
-                    const edge = document.createElementNS(svgNamespace, 'line');
-                    edge.classList.add('shot-group-connector-edge');
-                    edge.setAttribute('x1', String(gap.left));
-                    edge.setAttribute('x2', String(gap.right));
-                    edge.setAttribute('y1', String(y));
-                    edge.setAttribute('y2', String(y));
-                    connector.appendChild(edge);
-                });
-
-                layer.appendChild(connector);
+                appendShotGroupConnector(layer, gap, hatchPatternId, shotUnitId, isHovered);
+            });
+            buildShotGroupWrapRectangles(cards).forEach((band) => {
+                appendShotGroupConnector(layer, band, hatchPatternId, shotUnitId, isHovered);
             });
         });
 
@@ -3099,8 +3138,43 @@ document.addEventListener('DOMContentLoaded', async () => {
         return row;
     }
 
-    function appendPrintShotGroupConnectors(grid, entries, columnCount = 5) {
+    function createPrintConnectorSvg() {
         const svgNamespace = 'http://www.w3.org/2000/svg';
+        const patternId = `print-shot-group-hatch-${printShotGroupPatternSequence += 1}`;
+        const svg = document.createElementNS(svgNamespace, 'svg');
+        svg.classList.add('print-shot-group-connector-svg');
+        svg.setAttribute('width', '100%');
+        svg.setAttribute('height', '100%');
+        svg.setAttribute('preserveAspectRatio', 'none');
+        svg.setAttribute('focusable', 'false');
+
+        const definitions = document.createElementNS(svgNamespace, 'defs');
+        const pattern = document.createElementNS(svgNamespace, 'pattern');
+        pattern.setAttribute('id', patternId);
+        pattern.setAttribute('width', '4');
+        pattern.setAttribute('height', '4');
+        pattern.setAttribute('patternUnits', 'userSpaceOnUse');
+        pattern.setAttribute('patternTransform', 'rotate(45)');
+
+        const stripe = document.createElementNS(svgNamespace, 'rect');
+        stripe.classList.add('print-shot-group-hatch-stripe');
+        stripe.setAttribute('x', '0');
+        stripe.setAttribute('y', '0');
+        stripe.setAttribute('width', '1.5');
+        stripe.setAttribute('height', '4');
+        pattern.appendChild(stripe);
+        definitions.appendChild(pattern);
+        svg.appendChild(definitions);
+
+        const hatch = document.createElementNS(svgNamespace, 'rect');
+        hatch.setAttribute('width', '100%');
+        hatch.setAttribute('height', '100%');
+        hatch.setAttribute('fill', `url(#${patternId})`);
+        svg.appendChild(hatch);
+        return svg;
+    }
+
+    function appendPrintShotGroupConnectors(grid, entries, columnCount = 5) {
         for (let index = 1; index < entries.length; index += 1) {
             const previous = entries[index - 1];
             const current = entries[index];
@@ -3116,43 +3190,46 @@ document.addEventListener('DOMContentLoaded', async () => {
             connector.className = 'print-shot-group-connector';
             connector.dataset.shotUnitId = shotUnitId;
             connector.setAttribute('aria-hidden', 'true');
-            connector.style.gridColumn = String((previous.slotIndex % columnCount) * 2 + 2);
+            // 预留了最左边一列，所以卡片从第 2 列开始，连接列依次后移一格
+            connector.style.gridColumn = String((previous.slotIndex % columnCount) * 2 + 3);
             connector.style.gridRow = String(Math.floor(previous.slotIndex / columnCount) + 1);
-
-            const patternId = `print-shot-group-hatch-${printShotGroupPatternSequence += 1}`;
-            const svg = document.createElementNS(svgNamespace, 'svg');
-            svg.classList.add('print-shot-group-connector-svg');
-            svg.setAttribute('width', '100%');
-            svg.setAttribute('height', '100%');
-            svg.setAttribute('preserveAspectRatio', 'none');
-            svg.setAttribute('focusable', 'false');
-
-            const definitions = document.createElementNS(svgNamespace, 'defs');
-            const pattern = document.createElementNS(svgNamespace, 'pattern');
-            pattern.setAttribute('id', patternId);
-            pattern.setAttribute('width', '4');
-            pattern.setAttribute('height', '4');
-            pattern.setAttribute('patternUnits', 'userSpaceOnUse');
-            pattern.setAttribute('patternTransform', 'rotate(45)');
-
-            const stripe = document.createElementNS(svgNamespace, 'rect');
-            stripe.classList.add('print-shot-group-hatch-stripe');
-            stripe.setAttribute('x', '0');
-            stripe.setAttribute('y', '0');
-            stripe.setAttribute('width', '1.5');
-            stripe.setAttribute('height', '4');
-            pattern.appendChild(stripe);
-            definitions.appendChild(pattern);
-            svg.appendChild(definitions);
-
-            const hatch = document.createElementNS(svgNamespace, 'rect');
-            hatch.setAttribute('width', '100%');
-            hatch.setAttribute('height', '100%');
-            hatch.setAttribute('fill', `url(#${patternId})`);
-            svg.appendChild(hatch);
-            connector.appendChild(svg);
+            connector.appendChild(createPrintConnectorSvg());
             grid.appendChild(connector);
         }
+    }
+
+    // PDF 里卡片组换行时，行尾卡片右边、下一行首卡左边各补一条半宽连接带。
+    // 两条都落在网格预留的空列里（右边用它后面那格连接列，左边用最左侧预留列），不压卡片内容。
+    function appendPrintShotGroupWrapBands(grid, entries, columnCount = 5) {
+        for (let index = 1; index < entries.length; index += 1) {
+            const previous = entries[index - 1];
+            const current = entries[index];
+            const shotUnitId = isShotCardGrouped(current.card) ? getShotCardUnitId(current.card) : '';
+            const isConnected = shotUnitId
+                && shotUnitId === getShotCardUnitId(previous.card)
+                && current.slotIndex === previous.slotIndex + 1;
+            if (!isConnected) {
+                continue;
+            }
+            const previousRow = Math.floor(previous.slotIndex / columnCount);
+            const currentRow = Math.floor(current.slotIndex / columnCount);
+            if (currentRow !== previousRow + 1) {
+                continue;
+            }
+            appendPrintWrapBand(grid, shotUnitId, (previous.slotIndex % columnCount) * 2 + 3, previousRow + 1);
+            appendPrintWrapBand(grid, shotUnitId, 1, currentRow + 1);
+        }
+    }
+
+    function appendPrintWrapBand(grid, shotUnitId, gridColumn, gridRow) {
+        const band = document.createElement('div');
+        band.className = 'print-shot-group-connector print-shot-group-wrap-band';
+        band.dataset.shotUnitId = shotUnitId;
+        band.setAttribute('aria-hidden', 'true');
+        band.style.gridColumn = String(gridColumn);
+        band.style.gridRow = String(gridRow);
+        band.appendChild(createPrintConnectorSvg());
+        grid.appendChild(band);
     }
 
     function paginatePrintCards(cards, columnCount = 5, rowCount = 2) {
@@ -3181,12 +3258,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         units.forEach((unit) => {
             const unitSize = unit.cards.length;
-            if (unit.shotUnitId && unitSize > 1) {
-                const remainingInRow = columnCount - (nextSlot % columnCount);
-                if (unitSize > remainingInRow) {
-                    nextSlot += remainingInRow;
-                }
-            }
+            // 卡片组不再整组挪到下一行：排到行尾就自然换行，只保证不跨页。
             if (nextSlot >= pageCapacity || nextSlot + unitSize > pageCapacity) {
                 flushPage();
             }
@@ -3364,11 +3436,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         const printColumnCount = 5;
         entries.forEach(({ card, slotIndex }, cardOffset) => {
             const printCard = createPrintCard(card, startIndex + cardOffset + 1);
-            printCard.style.gridColumn = String((slotIndex % printColumnCount) * 2 + 1);
+            printCard.style.gridColumn = String((slotIndex % printColumnCount) * 2 + 2);
             printCard.style.gridRow = String(Math.floor(slotIndex / printColumnCount) + 1);
             grid.appendChild(printCard);
         });
         appendPrintShotGroupConnectors(grid, entries, printColumnCount);
+        appendPrintShotGroupWrapBands(grid, entries, printColumnCount);
 
         pageContent.appendChild(grid);
         page.appendChild(pageContent);
