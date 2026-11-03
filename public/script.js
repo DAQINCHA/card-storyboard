@@ -1135,235 +1135,130 @@ document.addEventListener('DOMContentLoaded', async () => {
         return Boolean(card?.classList?.contains('shot-grouped'));
     }
 
-    function buildShotGroupUnionPath(rectangles) {
-        if (!Array.isArray(rectangles) || rectangles.length === 0) {
-            return '';
-        }
-        const cornerRadius = 4;
-        const formatCoordinate = (value) => String(Math.round(value * 100) / 100);
-        const buildRoundedPath = (points) => {
-            const closedPoints = points.length > 1
-                && points[0][0] === points[points.length - 1][0]
-                && points[0][1] === points[points.length - 1][1]
-                ? points.slice(0, -1)
-                : points;
-            if (closedPoints.length < 3) {
-                return '';
-            }
-            const corners = closedPoints.map(([x, y], index) => {
-                const [previousX, previousY] = closedPoints[(index - 1 + closedPoints.length) % closedPoints.length];
-                const [nextX, nextY] = closedPoints[(index + 1) % closedPoints.length];
-                const previousDistance = Math.hypot(previousX - x, previousY - y);
-                const nextDistance = Math.hypot(nextX - x, nextY - y);
-                if (previousDistance === 0 || nextDistance === 0) {
-                    return { point: [x, y], before: [x, y], after: [x, y] };
-                }
-                const radius = Math.min(cornerRadius, previousDistance / 2, nextDistance / 2);
-                const before = [
-                    x + ((previousX - x) / previousDistance) * radius,
-                    y + ((previousY - y) / previousDistance) * radius
-                ];
-                const after = [
-                    x + ((nextX - x) / nextDistance) * radius,
-                    y + ((nextY - y) / nextDistance) * radius
-                ];
-                return { point: [x, y], before, after };
-            });
-            const firstCorner = corners[0];
-            const commands = [
-                `M ${formatCoordinate(firstCorner.before[0])} ${formatCoordinate(firstCorner.before[1])}`,
-                `Q ${formatCoordinate(firstCorner.point[0])} ${formatCoordinate(firstCorner.point[1])} ${formatCoordinate(firstCorner.after[0])} ${formatCoordinate(firstCorner.after[1])}`
-            ];
-            corners.slice(1).forEach((corner) => {
-                commands.push(`L ${formatCoordinate(corner.before[0])} ${formatCoordinate(corner.before[1])}`);
-                commands.push(`Q ${formatCoordinate(corner.point[0])} ${formatCoordinate(corner.point[1])} ${formatCoordinate(corner.after[0])} ${formatCoordinate(corner.after[1])}`);
-            });
-            commands.push(`L ${formatCoordinate(firstCorner.before[0])} ${formatCoordinate(firstCorner.before[1])} Z`);
-            return commands.join(' ');
-        };
-        const xs = Array.from(new Set(rectangles.flatMap((rect) => [rect.left, rect.right])))
-            .sort((left, right) => left - right);
-        const ys = Array.from(new Set(rectangles.flatMap((rect) => [rect.top, rect.bottom])))
-            .sort((left, right) => left - right);
-        const occupied = Array.from({ length: Math.max(0, ys.length - 1) }, () => (
-            Array(Math.max(0, xs.length - 1)).fill(false)
-        ));
+    const SHOT_GROUP_FRAME_STROKE_WIDTH = 1.5;
 
-        for (let row = 0; row < ys.length - 1; row += 1) {
-            for (let column = 0; column < xs.length - 1; column += 1) {
-                const centerX = (xs[column] + xs[column + 1]) / 2;
-                const centerY = (ys[row] + ys[row + 1]) / 2;
-                occupied[row][column] = rectangles.some((rect) => (
-                    centerX > rect.left && centerX < rect.right
-                    && centerY > rect.top && centerY < rect.bottom
-                ));
-            }
-        }
-
-        const edges = [];
-        const addEdge = (fromX, fromY, toX, toY) => {
-            edges.push({ fromX, fromY, toX, toY, used: false });
-        };
-        const isOccupied = (row, column) => Boolean(occupied[row]?.[column]);
-
-        for (let row = 0; row < occupied.length; row += 1) {
-            for (let column = 0; column < occupied[row].length; column += 1) {
-                if (!occupied[row][column]) {
-                    continue;
-                }
-                const left = xs[column];
-                const right = xs[column + 1];
-                const top = ys[row];
-                const bottom = ys[row + 1];
-                if (!isOccupied(row - 1, column)) addEdge(left, top, right, top);
-                if (!isOccupied(row, column + 1)) addEdge(right, top, right, bottom);
-                if (!isOccupied(row + 1, column)) addEdge(right, bottom, left, bottom);
-                if (!isOccupied(row, column - 1)) addEdge(left, bottom, left, top);
-            }
-        }
-
-        const pointKey = (x, y) => `${x},${y}`;
-        const outgoingEdges = new Map();
-        edges.forEach((edge) => {
-            const key = pointKey(edge.fromX, edge.fromY);
-            if (!outgoingEdges.has(key)) {
-                outgoingEdges.set(key, []);
-            }
-            outgoingEdges.get(key).push(edge);
-        });
-
-        const paths = [];
-        edges.forEach((startEdge) => {
-            if (startEdge.used) {
-                return;
-            }
-            const points = [[startEdge.fromX, startEdge.fromY]];
-            let edge = startEdge;
-            while (edge && !edge.used) {
-                edge.used = true;
-                points.push([edge.toX, edge.toY]);
-                if (edge.toX === startEdge.fromX && edge.toY === startEdge.fromY) {
-                    break;
-                }
-                edge = (outgoingEdges.get(pointKey(edge.toX, edge.toY)) || [])
-                    .find((candidate) => !candidate.used) || null;
-            }
-            if (points.length > 3) {
-                const roundedPath = buildRoundedPath(points);
-                if (roundedPath) {
-                    paths.push(roundedPath);
-                }
-            }
-        });
-
-        return paths.join(' ');
+    function getShotGroupCornerRadius() {
+        const rawValue = window.getComputedStyle(document.documentElement).getPropertyValue('--radius-lg');
+        const radius = Number.parseFloat(rawValue);
+        return Number.isFinite(radius) && radius > 0 ? radius : 12;
     }
 
-    function buildShotGroupFrameRectangles(cards, padding) {
-        const visibleCards = cards
+    function formatShotGroupCoordinate(value) {
+        return String(Math.round(value * 100) / 100);
+    }
+
+    // 组的填充轮廓：始终是一个闭合图形，跨行断开的那个侧面不做圆角
+    function buildShotGroupFillPath(rect, radius, openEdges) {
+        const format = formatShotGroupCoordinate;
+        const leftRadius = openEdges.left ? 0 : radius;
+        const rightRadius = openEdges.right ? 0 : radius;
+        const commands = [
+            `M ${format(rect.left + leftRadius)} ${format(rect.top)}`,
+            `L ${format(rect.right - rightRadius)} ${format(rect.top)}`
+        ];
+        if (rightRadius > 0) {
+            commands.push(`Q ${format(rect.right)} ${format(rect.top)} ${format(rect.right)} ${format(rect.top + rightRadius)}`);
+        }
+        commands.push(`L ${format(rect.right)} ${format(rect.bottom - rightRadius)}`);
+        if (rightRadius > 0) {
+            commands.push(`Q ${format(rect.right)} ${format(rect.bottom)} ${format(rect.right - rightRadius)} ${format(rect.bottom)}`);
+        }
+        commands.push(`L ${format(rect.left + leftRadius)} ${format(rect.bottom)}`);
+        if (leftRadius > 0) {
+            commands.push(`Q ${format(rect.left)} ${format(rect.bottom)} ${format(rect.left)} ${format(rect.bottom - leftRadius)}`);
+        }
+        commands.push(`L ${format(rect.left)} ${format(rect.top + leftRadius)}`);
+        if (leftRadius > 0) {
+            commands.push(`Q ${format(rect.left)} ${format(rect.top)} ${format(rect.left + leftRadius)} ${format(rect.top)}`);
+        }
+        commands.push('Z');
+        return commands.join(' ');
+    }
+
+    // 组的外框描边：开放的一侧不画线，跨行时外框在行尾 / 行首断开
+    function buildShotGroupStrokePath(rect, radius, openEdges) {
+        const format = formatShotGroupCoordinate;
+        const leftRadius = openEdges.left ? 0 : radius;
+        const rightRadius = openEdges.right ? 0 : radius;
+        const commands = [];
+        commands.push(openEdges.left
+            ? `M ${format(rect.left)} ${format(rect.top)}`
+            : `M ${format(rect.left + leftRadius)} ${format(rect.top)}`);
+        commands.push(`L ${format(rect.right - rightRadius)} ${format(rect.top)}`);
+        if (rightRadius > 0) {
+            commands.push(`Q ${format(rect.right)} ${format(rect.top)} ${format(rect.right)} ${format(rect.top + rightRadius)}`);
+        }
+        if (openEdges.right) {
+            commands.push(`M ${format(rect.right)} ${format(rect.bottom)}`);
+        } else {
+            commands.push(`L ${format(rect.right)} ${format(rect.bottom - rightRadius)}`);
+        }
+        if (rightRadius > 0) {
+            commands.push(`Q ${format(rect.right)} ${format(rect.bottom)} ${format(rect.right - rightRadius)} ${format(rect.bottom)}`);
+        }
+        commands.push(`L ${format(rect.left + leftRadius)} ${format(rect.bottom)}`);
+        if (leftRadius > 0) {
+            commands.push(`Q ${format(rect.left)} ${format(rect.bottom)} ${format(rect.left)} ${format(rect.bottom - leftRadius)}`);
+        }
+        if (!openEdges.left) {
+            commands.push(`L ${format(rect.left)} ${format(rect.top + leftRadius)}`);
+            if (leftRadius > 0) {
+                commands.push(`Q ${format(rect.left)} ${format(rect.top)} ${format(rect.left + leftRadius)} ${format(rect.top)}`);
+            }
+        }
+        return commands.join(' ');
+    }
+
+    // 按行把组内的卡片切成一段段，每段画一圈外框；换行就断成两段
+    function buildShotGroupRows(cards) {
+        const visibleEntries = cards
             .filter((card) => card && card.offsetParent !== null)
             .map((card) => ({
+                card,
                 left: card.offsetLeft,
                 top: card.offsetTop,
                 right: card.offsetLeft + card.offsetWidth,
                 bottom: card.offsetTop + card.offsetHeight
             }))
             .sort((left, right) => left.top - right.top || left.left - right.left);
-        if (visibleCards.length === 0) {
+        if (visibleEntries.length === 0) {
             return [];
         }
 
         const rowTolerance = 3;
         const rows = [];
-        visibleCards.forEach((rect) => {
-            let row = rows.find((candidate) => Math.abs(candidate.top - rect.top) <= rowTolerance);
+        visibleEntries.forEach((entry) => {
+            let row = rows.find((candidate) => Math.abs(candidate.top - entry.top) <= rowTolerance);
             if (!row) {
-                row = { top: rect.top, cards: [] };
+                row = { top: entry.top, entries: [] };
                 rows.push(row);
             }
-            row.cards.push(rect);
+            row.entries.push(entry);
         });
+        rows.sort((left, right) => left.top - right.top);
 
-        const rowRects = rows.map((row) => ({
-            left: Math.min(...row.cards.map((rect) => rect.left)) - padding,
-            top: Math.min(...row.cards.map((rect) => rect.top)) - padding,
-            right: Math.max(...row.cards.map((rect) => rect.right)) + padding,
-            bottom: Math.max(...row.cards.map((rect) => rect.bottom)) + padding
-        }));
-        const rectangles = [...rowRects];
-
-        // 换行时两行各自独立算投影，不再补行与行之间的连接块
-        return rectangles.map((rect) => ({
-            left: Math.round(rect.left),
-            top: Math.round(rect.top),
-            right: Math.round(rect.right),
-            bottom: Math.round(rect.bottom)
-        }));
+        return rows.map((row) => {
+            row.entries.sort((left, right) => left.left - right.left);
+            return {
+                left: Math.round(Math.min(...row.entries.map((entry) => entry.left))),
+                top: Math.round(Math.min(...row.entries.map((entry) => entry.top))),
+                right: Math.round(Math.max(...row.entries.map((entry) => entry.right))),
+                bottom: Math.round(Math.max(...row.entries.map((entry) => entry.bottom))),
+                entries: row.entries,
+                cards: row.entries.map((entry) => entry.card)
+            };
+        });
     }
 
-    function buildShotGroupGapRectangles(cards) {
-        const visibleCards = cards
-            .filter((card) => card && card.offsetParent !== null)
-            .map((card) => ({
-                left: card.offsetLeft,
-                top: card.offsetTop,
-                right: card.offsetLeft + card.offsetWidth,
-                bottom: card.offsetTop + card.offsetHeight
-            }))
-            .sort((left, right) => left.top - right.top || left.left - right.left);
-        const rowTolerance = 3;
-        const gaps = [];
-        for (let index = 1; index < visibleCards.length; index += 1) {
-            const previous = visibleCards[index - 1];
-            const current = visibleCards[index];
-            if (Math.abs(previous.top - current.top) > rowTolerance || current.left <= previous.right) {
-                continue;
-            }
-            gaps.push({
-                left: Math.round(previous.right),
-                top: Math.round(Math.min(previous.top, current.top)),
-                right: Math.round(current.left),
-                bottom: Math.round(Math.max(previous.bottom, current.bottom))
-            });
-        }
-        return gaps;
-    }
-
-    // 卡片组换行时，行尾卡片的右边、下一行首张卡片的左边，各补一条连接带。
-    // 宽度取正常连接线（卡片间距）的一半，长度等于卡片本身的高度，不伸进行间距。
-    function buildShotGroupWrapRectangles(cards, fallbackGap = 20) {
-        const visibleCards = cards
-            .filter((card) => card && card.offsetParent !== null)
-            .map((card) => ({
-                left: card.offsetLeft,
-                top: card.offsetTop,
-                right: card.offsetLeft + card.offsetWidth,
-                bottom: card.offsetTop + card.offsetHeight
-            }))
-            .sort((left, right) => left.top - right.top || left.left - right.left);
-        if (visibleCards.length < 2) {
-            return [];
-        }
-
-        const rowTolerance = 3;
-        const rows = [];
-        visibleCards.forEach((rect) => {
-            let row = rows.find((candidate) => Math.abs(candidate[0].top - rect.top) <= rowTolerance);
-            if (!row) {
-                row = [];
-                rows.push(row);
-            }
-            row.push(rect);
-        });
+    // 组里换行时，行尾卡片右侧、下一行首张卡片左侧各补一小条斜线，表示这组还在继续
+    function buildShotGroupWrapBands(rows, fallbackGap = 20) {
         if (rows.length < 2) {
             return [];
         }
-        rows.forEach((row) => row.sort((left, right) => left.left - right.left));
-
         const rowGaps = [];
         rows.forEach((row) => {
-            for (let index = 1; index < row.length; index += 1) {
-                const gapWidth = row[index].left - row[index - 1].right;
+            for (let index = 1; index < row.entries.length; index += 1) {
+                const gapWidth = row.entries[index].left - row.entries[index - 1].right;
                 if (gapWidth > 0) {
                     rowGaps.push(gapWidth);
                 }
@@ -1372,72 +1267,24 @@ document.addEventListener('DOMContentLoaded', async () => {
         const columnGap = rowGaps.length > 0 ? Math.min(...rowGaps) : fallbackGap;
         const bandWidth = Math.max(4, Math.round(columnGap / 2));
 
-        const rectangles = [];
+        const bands = [];
         for (let index = 1; index < rows.length; index += 1) {
-            const previousRow = rows[index - 1];
-            const currentRow = rows[index];
-            const lastCard = previousRow[previousRow.length - 1];
-            const firstCard = currentRow[0];
-            rectangles.push({
-                left: lastCard.right,
-                top: lastCard.top,
-                right: lastCard.right + bandWidth,
-                bottom: lastCard.bottom
+            const lastEntry = rows[index - 1].entries[rows[index - 1].entries.length - 1];
+            const firstEntry = rows[index].entries[0];
+            bands.push({
+                left: lastEntry.right,
+                top: lastEntry.top,
+                right: lastEntry.right + bandWidth,
+                bottom: lastEntry.bottom
             });
-            rectangles.push({
-                left: firstCard.left - bandWidth,
-                top: firstCard.top,
-                right: firstCard.left,
-                bottom: firstCard.bottom
+            bands.push({
+                left: firstEntry.left - bandWidth,
+                top: firstEntry.top,
+                right: firstEntry.left,
+                bottom: firstEntry.bottom
             });
         }
-
-        return rectangles.map((rect) => ({
-            left: Math.round(rect.left),
-            top: Math.round(rect.top),
-            right: Math.round(rect.right),
-            bottom: Math.round(rect.bottom)
-        }));
-    }
-
-    function appendShotGroupConnector(layer, rect, hatchPatternId, shotUnitId, isHovered) {
-        const svgNamespace = 'http://www.w3.org/2000/svg';
-        const connector = document.createElementNS(svgNamespace, 'g');
-        connector.classList.add('shot-group-connector');
-        connector.classList.toggle('is-hovered', isHovered);
-        connector.dataset.shotUnitId = shotUnitId;
-
-        const hatch = document.createElementNS(svgNamespace, 'rect');
-        hatch.classList.add('shot-group-hatch-connector');
-        hatch.setAttribute('x', String(rect.left));
-        hatch.setAttribute('y', String(rect.top));
-        hatch.setAttribute('width', String(rect.right - rect.left));
-        hatch.setAttribute('height', String(rect.bottom - rect.top));
-        hatch.setAttribute('fill', `url(#${hatchPatternId})`);
-        connector.appendChild(hatch);
-
-        // 竖着的带子把边线画在左右两侧，横着的画在上下两侧
-        const isVertical = (rect.bottom - rect.top) > (rect.right - rect.left);
-        const edges = isVertical
-            ? [
-                [rect.left + 0.75, rect.top, rect.left + 0.75, rect.bottom],
-                [rect.right - 0.75, rect.top, rect.right - 0.75, rect.bottom]
-            ]
-            : [
-                [rect.left, rect.top + 0.75, rect.right, rect.top + 0.75],
-                [rect.left, rect.bottom - 0.75, rect.right, rect.bottom - 0.75]
-            ];
-        edges.forEach(([x1, y1, x2, y2]) => {
-            const edge = document.createElementNS(svgNamespace, 'line');
-            edge.classList.add('shot-group-connector-edge');
-            edge.setAttribute('x1', String(x1));
-            edge.setAttribute('x2', String(x2));
-            edge.setAttribute('y1', String(y1));
-            edge.setAttribute('y2', String(y2));
-            connector.appendChild(edge);
-        });
-
-        layer.appendChild(connector);
+        return bands;
     }
 
     function renderShotGroupFrames(grid) {
@@ -1445,6 +1292,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
         grid.querySelectorAll(':scope > .shot-group-frame-layer').forEach((layer) => layer.remove());
+        grid.querySelectorAll(':scope > .shot-card').forEach((card) => {
+            card.classList.remove('is-group-first', 'is-group-edge-start', 'is-group-edge-end');
+        });
+
         const cardsByUnitId = new Map();
         grid.querySelectorAll(':scope > .shot-card.shot-grouped').forEach((card) => {
             const shotUnitId = getShotCardUnitId(card);
@@ -1478,43 +1329,104 @@ document.addEventListener('DOMContentLoaded', async () => {
         hatchPattern.setAttribute('height', '4');
         hatchPattern.setAttribute('patternUnits', 'userSpaceOnUse');
         hatchPattern.setAttribute('patternTransform', 'rotate(45)');
+        // 先铺一层不透明底色，免得背后的金色投影从斜线缝隙里透出来
+        const hatchBase = document.createElementNS(svgNamespace, 'rect');
+        hatchBase.classList.add('shot-group-hatch-base');
+        hatchBase.setAttribute('width', '4');
+        hatchBase.setAttribute('height', '4');
+        hatchPattern.appendChild(hatchBase);
         const hatchStripe = document.createElementNS(svgNamespace, 'rect');
         hatchStripe.classList.add('shot-group-hatch-stripe');
-        hatchStripe.setAttribute('x', '0');
-        hatchStripe.setAttribute('y', '0');
         hatchStripe.setAttribute('width', '1.5');
         hatchStripe.setAttribute('height', '4');
         hatchPattern.appendChild(hatchStripe);
         definitions.appendChild(hatchPattern);
         layer.appendChild(definitions);
 
+        const cornerRadius = getShotGroupCornerRadius();
+        const strokeOffset = SHOT_GROUP_FRAME_STROKE_WIDTH / 2;
+
         cardsByUnitId.forEach((cards, shotUnitId) => {
-            const rectangles = buildShotGroupFrameRectangles(cards, 0);
-            const pathData = buildShotGroupUnionPath(rectangles);
-            if (!pathData) {
-                return;
-            }
+            cards.forEach((card, index) => card.classList.toggle('is-group-first', index === 0));
             const isHovered = !grid.classList.contains('is-multi-select')
                 && !grid.classList.contains('is-sorting')
                 && (hoveredShotUnitId === shotUnitId || cards.some((card) => card.matches(':hover')));
             cards.forEach((card) => card.classList.toggle('is-group-hovered', isHovered));
 
-            const offsetShadow = document.createElementNS(svgNamespace, 'path');
-            offsetShadow.classList.add('shot-group-shadow-path', 'shot-group-shadow-offset');
-            offsetShadow.setAttribute('d', pathData);
-            offsetShadow.dataset.shotUnitId = shotUnitId;
-            offsetShadow.classList.toggle('is-hovered', isHovered);
-            layer.appendChild(offsetShadow);
+            const rows = buildShotGroupRows(cards);
+            if (rows.length === 0) {
+                return;
+            }
 
-            buildShotGroupGapRectangles(cards).forEach((gap) => {
-                appendShotGroupConnector(layer, gap, hatchPatternId, shotUnitId, isHovered);
+            const body = document.createElementNS(svgNamespace, 'g');
+            body.classList.add('shot-group-frame-body');
+            body.classList.toggle('is-hovered', isHovered);
+            body.dataset.shotUnitId = shotUnitId;
+            const shadowPaths = [];
+
+            buildShotGroupWrapBands(rows).forEach((band) => {
+                const bandRect = {
+                    left: band.left,
+                    top: band.top,
+                    right: band.right,
+                    bottom: band.bottom
+                };
+                const bandPath = document.createElementNS(svgNamespace, 'path');
+                bandPath.classList.add('shot-group-wrap-band');
+                bandPath.setAttribute('fill', `url(#${hatchPatternId})`);
+                bandPath.setAttribute('d', buildShotGroupFillPath(bandRect, 0, { left: false, right: false }));
+                body.appendChild(bandPath);
             });
-            buildShotGroupWrapRectangles(cards).forEach((band) => {
-                appendShotGroupConnector(layer, band, hatchPatternId, shotUnitId, isHovered);
+
+            rows.forEach((row, rowIndex) => {
+                // 跨行时外框在行尾 / 行首断开，靠在一起的那一侧不封口
+                const openEdges = {
+                    left: rowIndex > 0,
+                    right: rowIndex < rows.length - 1
+                };
+                if (!openEdges.left) {
+                    row.cards[0].classList.add('is-group-edge-start');
+                }
+                if (!openEdges.right) {
+                    row.cards[row.cards.length - 1].classList.add('is-group-edge-end');
+                }
+
+                const frameRect = {
+                    left: row.left - strokeOffset,
+                    top: row.top - strokeOffset,
+                    right: row.right + strokeOffset,
+                    bottom: row.bottom + strokeOffset
+                };
+                const frameRadius = cornerRadius + strokeOffset;
+                const fillPathData = buildShotGroupFillPath(frameRect, frameRadius, openEdges);
+                const strokePathData = buildShotGroupStrokePath(frameRect, frameRadius, openEdges);
+
+                const shadow = document.createElementNS(svgNamespace, 'path');
+                shadow.classList.add('shot-group-shadow-path');
+                shadow.classList.toggle('is-hovered', isHovered);
+                shadow.dataset.shotUnitId = shotUnitId;
+                shadow.setAttribute('d', fillPathData);
+                shadowPaths.push(shadow);
+
+                const fill = document.createElementNS(svgNamespace, 'path');
+                fill.classList.add('shot-group-frame-fill');
+                fill.dataset.shotUnitId = shotUnitId;
+                fill.setAttribute('fill', `url(#${hatchPatternId})`);
+                fill.setAttribute('d', fillPathData);
+
+                const stroke = document.createElementNS(svgNamespace, 'path');
+                stroke.classList.add('shot-group-frame-stroke');
+                stroke.setAttribute('d', strokePathData);
+
+                body.appendChild(fill);
+                body.appendChild(stroke);
             });
+
+            shadowPaths.forEach((shadow) => layer.appendChild(shadow));
+            layer.appendChild(body);
         });
 
-        if (layer.childNodes.length > 0) {
+        if (layer.childNodes.length > 1) {
             grid.insertBefore(layer, grid.firstChild);
         }
     }
@@ -1728,8 +1640,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (card?.parentElement === storyboardGrid) {
             return getShotCardUnitId(card);
         }
-        const connector = target.closest('.shot-group-connector');
-        return normalizeShotUnitId(connector?.dataset.shotUnitId);
+        const groupElement = target.closest('.shot-group-frame-layer [data-shot-unit-id]');
+        return normalizeShotUnitId(groupElement?.dataset.shotUnitId);
     }
 
     function setShotGroupHoverState(shotUnitId, isHovered) {
@@ -1779,6 +1691,85 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         setShotGroupHoverState(shotUnitId, false);
     });
+
+    function getShotGroupCards(card) {
+        const shotUnitId = getShotCardUnitId(card);
+        if (!card || !shotUnitId || !isShotCardGrouped(card)) {
+            return [];
+        }
+        return Array.from(storyboardGrid.querySelectorAll(':scope > .shot-card.shot-grouped'))
+            .filter((item) => getShotCardUnitId(item) === shotUnitId);
+    }
+
+    // 组内运镜四选一共用一个选项：改任意一张，组里其他卡片跟着变
+    function syncShotGroupCameraMove(card) {
+        const groupCards = getShotGroupCards(card);
+        if (groupCards.length < 2) {
+            return;
+        }
+        const targetValue = card.querySelector('.shot-camera-move input[type="radio"]:checked')?.value;
+        if (!targetValue) {
+            return;
+        }
+        groupCards.forEach((other) => {
+            if (other === card) {
+                return;
+            }
+            other.querySelectorAll('.shot-camera-move input[type="radio"]').forEach((radio) => {
+                if (radio.value === targetValue) {
+                    radio.checked = true;
+                }
+            });
+        });
+    }
+
+    storyboardGrid.addEventListener('change', (event) => {
+        const input = event.target;
+        if (!(input instanceof HTMLInputElement) || input.type !== 'radio' || !input.checked) {
+            return;
+        }
+        if (!input.closest('.shot-camera-move')) {
+            return;
+        }
+        const card = input.closest('.shot-card');
+        if (card) {
+            syncShotGroupCameraMove(card);
+        }
+    });
+
+    function applySceneHeaderColorToCard(card, newColor) {
+        if (!card || !newColor) {
+            return;
+        }
+        const header = card.querySelector('.shot-header');
+        const colorWrapper = card.querySelector('.color-picker-wrapper');
+        const colorTrigger = card.querySelector('.scene-color-trigger');
+        if (!header || !colorWrapper || !colorTrigger) {
+            return;
+        }
+        const readableColor = normalizeSceneHeaderColor(newColor);
+        colorWrapper.dataset.color = readableColor;
+        const usesWritingAreaBackground = readableColor === DEFAULT_SCENE_HEADER_COLOR;
+        colorTrigger.style.backgroundColor = usesWritingAreaBackground ? '' : readableColor;
+        header.style.backgroundColor = usesWritingAreaBackground ? '' : readableColor;
+        header.classList.toggle('light-scene-header', isLightSceneHeaderColor(readableColor));
+        card.querySelectorAll('.scene-color-option').forEach((option) => {
+            option.classList.toggle('active', option.dataset.color === readableColor);
+        });
+    }
+
+    // 组内共用一个场景颜色：改第一张，整组跟着变
+    function syncShotGroupSceneColor(card, newColor) {
+        const groupCards = getShotGroupCards(card);
+        if (groupCards.length < 2) {
+            return;
+        }
+        groupCards.forEach((other) => {
+            if (other !== card) {
+                applySceneHeaderColorToCard(other, newColor);
+            }
+        });
+    }
 
     function areShotCardsContiguousInSameScene(cards) {
         const normalizedCards = Array.from(new Set(cards || []))
@@ -1861,7 +1852,38 @@ document.addEventListener('DOMContentLoaded', async () => {
         cards.forEach((card) => {
             const grouped = (unitCounts.get(getShotCardUnitId(card)) || 0) > 1;
             card.classList.toggle('shot-grouped', grouped);
-            if (!grouped) card.classList.remove('is-group-hovered');
+            if (!grouped) {
+                card.classList.remove('is-group-hovered', 'is-group-first', 'is-group-edge-start', 'is-group-edge-end');
+            }
+        });
+
+        // 组内运镜四选一共用一个值，统一跟第一张卡对齐
+        const groupedCardsByUnitId = new Map();
+        cards.forEach((card) => {
+            if ((unitCounts.get(getShotCardUnitId(card)) || 0) < 2) {
+                return;
+            }
+            const shotUnitId = getShotCardUnitId(card);
+            if (!groupedCardsByUnitId.has(shotUnitId)) groupedCardsByUnitId.set(shotUnitId, []);
+            groupedCardsByUnitId.get(shotUnitId).push(card);
+        });
+        groupedCardsByUnitId.forEach((unitCards) => {
+            if (unitCards.length < 2) {
+                return;
+            }
+            // 共用的把手 / SHOT# / 时长 / VFX / 颜色只留在第一张卡上
+            unitCards.forEach((card, index) => card.classList.toggle('is-group-first', index === 0));
+            const leadingValue = unitCards[0].querySelector('.shot-camera-move input[type="radio"]:checked')?.value;
+            if (!leadingValue) {
+                return;
+            }
+            unitCards.slice(1).forEach((card) => {
+                card.querySelectorAll('.shot-camera-move input[type="radio"]').forEach((radio) => {
+                    if (radio.value === leadingValue && !radio.checked) {
+                        radio.checked = true;
+                    }
+                });
+            });
         });
     }
 
@@ -4146,7 +4168,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         shotCount++;
         const clone = template.content.cloneNode(true);
         const card = clone.querySelector('.shot-card');
-        const header = clone.querySelector('.shot-header');
         card.dataset.shotUnitId = typeof shotData?.shotUnitId === 'string' && shotData.shotUnitId.trim()
             ? shotData.shotUnitId.trim()
             : createShotUnitId();
@@ -4276,18 +4297,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (!newColor) {
                 return;
             }
-            const readableColor = normalizeSceneHeaderColor(newColor);
-            colorWrapper.dataset.color = readableColor;
-            const usesWritingAreaBackground = readableColor === DEFAULT_SCENE_HEADER_COLOR;
-            colorTrigger.style.backgroundColor = usesWritingAreaBackground ? '' : readableColor;
-            header.style.backgroundColor = usesWritingAreaBackground ? '' : readableColor;
-            header.classList.toggle('light-scene-header', isLightSceneHeaderColor(readableColor));
-
-            const options = colorPalette.querySelectorAll('.scene-color-option');
-            options.forEach((option) => {
-                option.classList.toggle('active', option.dataset.color === readableColor);
-            });
-
+            applySceneHeaderColorToCard(card, newColor);
             if (shouldSave) {
                 scheduleSaveState();
             }
@@ -4335,6 +4345,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
 
             setHeaderColor(option.dataset.color, true);
+            syncShotGroupSceneColor(card, option.dataset.color);
             colorPalette.classList.remove('show');
         });
 
