@@ -18,6 +18,8 @@
     --radius-lg: 12px;
     --radius-md: 8px;
     --radius-sm: 4px;
+    /* 卡片实际圆角：主题若单独改了 .shot-card 的圆角，这里要跟着改，镜头组外框按它对齐 */
+    --shot-card-radius: var(--radius-lg);
     --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
     --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
     --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
@@ -2213,15 +2215,15 @@ html.preload-view-editor #editor-view.hidden {
     border-radius: 0;
 }
 
-/* 组外框的首尾卡片，圆角与单张卡片保持一致 */
+/* 组外框首尾卡片的圆角：比外框最外沿小一个描边宽度，正好贴住边框内沿 */
 #storyboard-grid > .shot-card.shot-grouped.is-group-edge-start {
-    border-top-left-radius: var(--radius-lg);
-    border-bottom-left-radius: var(--radius-lg);
+    border-top-left-radius: calc(var(--shot-card-radius) - 1.5px);
+    border-bottom-left-radius: calc(var(--shot-card-radius) - 1.5px);
 }
 
 #storyboard-grid > .shot-card.shot-grouped.is-group-edge-end {
-    border-top-right-radius: var(--radius-lg);
-    border-bottom-right-radius: var(--radius-lg);
+    border-top-right-radius: calc(var(--shot-card-radius) - 1.5px);
+    border-bottom-right-radius: calc(var(--shot-card-radius) - 1.5px);
 }
 
 /* 组内共用的把手、SHOT#、时长、VFX、颜色只留在第一张卡上，删除按钮保留并靠右 */
@@ -3251,6 +3253,8 @@ body.is-sorting {
         --radius-lg: 8px;
         --radius-md: 5px;
         --radius-sm: 3px;
+        /* 本主题把 .shot-card 的圆角改成了 4px（见下方 .shot-card），镜头组按这个值对齐 */
+        --shot-card-radius: 4px;
         --shadow-sm: 4px 4px 0 rgba(41, 40, 33, 0.92);
         --shadow-md: 6px 6px 0 #e9b84c;
         --shadow-lg: 8px 8px 0 rgba(41, 40, 33, 0.9);
@@ -3438,7 +3442,7 @@ body.is-sorting {
 
     .shot-card {
         border: 1.5px solid #292821;
-        border-radius: 4px;
+        border-radius: var(--shot-card-radius);
         background: #fffdf8;
         box-shadow: 5px 5px 0 var(--shot-card-shadow-color);
     }

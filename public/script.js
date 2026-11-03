@@ -1137,8 +1137,20 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const SHOT_GROUP_FRAME_STROKE_WIDTH = 1.5;
 
-    function getShotGroupCornerRadius() {
-        const rawValue = window.getComputedStyle(document.documentElement).getPropertyValue('--radius-lg');
+    // 外框圆角必须跟"卡片自己的圆角"一致：优先量一张没编组的卡片，
+    // 全都编组时退回主题变量 --shot-card-radius（主题改了卡片圆角要同步改它）
+    function getShotGroupCornerRadius(grid) {
+        const sampleCard = grid
+            ? grid.querySelector(':scope > .shot-card:not(.shot-grouped)')
+            : null;
+        if (sampleCard) {
+            const cardRadius = Number.parseFloat(window.getComputedStyle(sampleCard).borderTopLeftRadius);
+            if (Number.isFinite(cardRadius) && cardRadius > 0) {
+                return cardRadius;
+            }
+        }
+        const rawValue = window.getComputedStyle(grid || document.documentElement)
+            .getPropertyValue('--shot-card-radius');
         const radius = Number.parseFloat(rawValue);
         return Number.isFinite(radius) && radius > 0 ? radius : 12;
     }
@@ -1343,7 +1355,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         definitions.appendChild(hatchPattern);
         layer.appendChild(definitions);
 
-        const cornerRadius = getShotGroupCornerRadius();
+        const cornerRadius = getShotGroupCornerRadius(grid);
         const strokeOffset = SHOT_GROUP_FRAME_STROKE_WIDTH / 2;
 
         cardsByUnitId.forEach((cards, shotUnitId) => {
@@ -1397,7 +1409,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                     right: row.right + strokeOffset,
                     bottom: row.bottom + strokeOffset
                 };
-                const frameRadius = cornerRadius + strokeOffset;
+                // 外框外沿的弧度 = 卡片圆角；描边向外让出的半个线宽从半径里扣掉
+                const frameRadius = Math.max(0, cornerRadius - strokeOffset);
                 const fillPathData = buildShotGroupFillPath(frameRect, frameRadius, openEdges);
                 const strokePathData = buildShotGroupStrokePath(frameRect, frameRadius, openEdges);
 
