@@ -255,11 +255,16 @@ export function createRundownController({
     view,
     printRoot,
     onBack,
-    onChange
+    onChange,
+    onUndo,
+    onRedo,
+    onCommitInput
 }) {
     const elements = {
         title: view.querySelector('#rundown-project-title'),
         saveState: view.querySelector('#rundown-save-state'),
+        undo: view.querySelector('#rundown-undo-btn'),
+        redo: view.querySelector('#rundown-redo-btn'),
         back: view.querySelector('#rundown-back-btn'),
         addDay: view.querySelector('#rundown-add-day-btn'),
         export: view.querySelector('#rundown-export-btn'),
@@ -286,6 +291,12 @@ export function createRundownController({
     let activeDrag = null;
     let previousDocumentTitle = '';
     let colorFilterOptions = [];
+    let historyUiState = {
+        canUndo: false,
+        canRedo: false,
+        undoTitle: '撤销',
+        redoTitle: '重做'
+    };
 
     function applyProjectAspectRatio() {
         const aspect = ['16/9', '4/3', '2.35/1'].includes(project?.aspectRatio)
@@ -320,8 +331,8 @@ export function createRundownController({
         });
     }
 
-    function emitChange() {
-        onChange?.(clone(rundown));
+    function emitChange(meta = {}) {
+        onChange?.(clone(rundown), meta);
         updateSummary();
         updateValidationSummary();
     }
@@ -507,11 +518,25 @@ export function createRundownController({
         applyReadOnlyState();
     }
 
+    function syncHistoryButtons() {
+        if (elements.undo) {
+            elements.undo.disabled = readOnly || !historyUiState.canUndo;
+            elements.undo.title = historyUiState.undoTitle || '撤销';
+            elements.undo.setAttribute('aria-label', historyUiState.undoTitle || '撤销');
+        }
+        if (elements.redo) {
+            elements.redo.disabled = readOnly || !historyUiState.canRedo;
+            elements.redo.title = historyUiState.redoTitle || '重做';
+            elements.redo.setAttribute('aria-label', historyUiState.redoTitle || '重做');
+        }
+    }
+
     function applyReadOnlyState() {
         view.classList.toggle('is-readonly', readOnly);
         elements.readonlyBanner.classList.toggle('hidden', !readOnly);
         elements.addDay.disabled = readOnly;
         elements.addFiltered.disabled = readOnly;
+        syncHistoryButtons();
     }
 
     function updateSummary() {
@@ -559,7 +584,7 @@ export function createRundownController({
         if (readOnly) return;
         const day = { id: randomId('rundown-day'), date: nextDate(), items: [] };
         rundown.days.push(day);
-        emitChange();
+        emitChange({ label: '添加拍摄日', immediate: true });
         render();
         elements.targetDay.value = day.id;
     }
@@ -571,7 +596,7 @@ export function createRundownController({
         const item = { id: randomId('rundown-item'), type: 'shot', shotUnitId, startTime: '', endTime: '', setupLabel: '' };
         if (Number.isInteger(targetIndex)) day.items.splice(targetIndex, 0, item);
         else day.items.push(item);
-        emitChange();
+        emitChange({ label: '安排镜头到日程', immediate: true });
         render();
     }
 
@@ -579,7 +604,7 @@ export function createRundownController({
         const day = findDay(dayId);
         if (readOnly || !day) return;
         day.items.push({ id: randomId('rundown-item'), type: 'event', title: '', startTime: '', endTime: '', setupLabel: '' });
-        emitChange();
+        emitChange({ label: '添加现场事项', immediate: true });
         render();
         view.querySelector(`[data-day-id="${CSS.escape(dayId)}"] .rundown-event-title:last-of-type`)?.focus();
     }
@@ -588,7 +613,7 @@ export function createRundownController({
         const day = findDay(dayId);
         if (!day) return;
         day.items = day.items.filter((item) => item.id !== itemId);
-        emitChange();
+        emitChange({ label: '移出日程项', immediate: true });
         render();
     }
 
@@ -602,7 +627,7 @@ export function createRundownController({
         let index = Number.isInteger(targetIndex) ? targetIndex : targetDay.items.length;
         if (sourceDay === targetDay && sourceIndex < index) index -= 1;
         targetDay.items.splice(Math.max(0, index), 0, item);
-        emitChange();
+        emitChange({ label: '调整日程顺序', immediate: true });
         render();
     }
 
@@ -697,6 +722,8 @@ export function createRundownController({
     }
 
     elements.back.addEventListener('click', () => onBack?.());
+    elements.undo?.addEventListener('click', () => onUndo?.());
+    elements.redo?.addEventListener('click', () => onRedo?.());
     elements.addDay.addEventListener('click', addDay);
     elements.export.addEventListener('click', exportPdf);
     [elements.search, elements.sceneFilter].forEach((control) => control.addEventListener('input', renderPool));
@@ -746,7 +773,7 @@ export function createRundownController({
         const units = filteredUnscheduledUnits();
         units.forEach((unit) => day.items.push({ id: randomId('rundown-item'), type: 'shot', shotUnitId: unit.id, startTime: '', endTime: '', setupLabel: '' }));
         if (units.length) {
-            emitChange();
+            emitChange({ label: `批量安排 ${units.length} 个镜头`, immediate: true });
             render();
         }
     });
@@ -814,7 +841,7 @@ export function createRundownController({
             const day = findDay(dayId);
             if (day?.items?.length && !window.confirm('删除这个拍摄日？镜头会回到未安排池，现场事项会被删除。')) return;
             rundown.days = rundown.days.filter((item) => item.id !== dayId);
-            emitChange();
+            emitChange({ label: '删除拍摄日', immediate: true });
             render();
         }
     });
@@ -831,7 +858,7 @@ export function createRundownController({
                 return;
             }
             findDay(dayId).date = event.target.value;
-            emitChange();
+            emitChange({ label: '修改拍摄日期', immediate: true });
             render();
         }
     });
@@ -845,8 +872,18 @@ export function createRundownController({
         item[field] = event.target.value;
         const duration = row.querySelector('.rundown-time-cell small');
         if (duration) duration.textContent = durationLabel(item.startTime, item.endTime) || '请填写有效时段';
-        emitChange();
+        emitChange({
+            label: field === 'title' ? '编辑事项名称' : '修改日程时间',
+            mergeKey: `rundown-${field === 'title' ? 'title' : 'time'}:${item.id}`,
+            immediate: false
+        });
         refreshDayValidation(row.dataset.dayId);
+    });
+    elements.days.addEventListener('focusout', (event) => {
+        if (readOnly) return;
+        if (event.target?.dataset?.field) {
+            onCommitInput?.();
+        }
     });
     window.addEventListener('afterprint', finishPrint);
 
@@ -877,6 +914,25 @@ export function createRundownController({
         },
         acceptSavedRundown(value) {
             rundown = normalizeRundown(value);
+        },
+        setHistoryState(nextState = {}) {
+            historyUiState = {
+                canUndo: Boolean(nextState.canUndo),
+                canRedo: Boolean(nextState.canRedo),
+                undoTitle: nextState.undoTitle || '撤销',
+                redoTitle: nextState.redoTitle || '重做'
+            };
+            syncHistoryButtons();
+        },
+        applyRundownState(nextRundown, nextProject = null) {
+            if (nextProject) {
+                project = nextProject;
+                applyProjectAspectRatio();
+                elements.title.textContent = nextProject?.name || 'Rundown';
+                ({ units: shotUnits, unitsById: shotUnitsById } = buildShotUnits(nextProject?.shots));
+            }
+            rundown = normalizeRundown(nextRundown);
+            render();
         },
         refreshProject(nextProject) {
             project = nextProject;

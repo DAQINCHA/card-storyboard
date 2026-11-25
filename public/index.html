@@ -116,6 +116,27 @@
                         </svg>
                     </button>
 
+                    <div class="history-btn-group" role="group" aria-label="撤销与重做">
+                        <button id="undo-btn" class="secondary-btn history-icon-btn" type="button" title="撤销" aria-label="撤销" disabled>
+                            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"
+                                aria-hidden="true">
+                                <path d="M9 14L4 9L9 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                    stroke-linejoin="round" />
+                                <path d="M20 20V13C20 10.7909 18.2091 9 16 9H4" stroke="currentColor" stroke-width="2"
+                                    stroke-linecap="round" stroke-linejoin="round" />
+                            </svg>
+                        </button>
+                        <button id="redo-btn" class="secondary-btn history-icon-btn" type="button" title="重做" aria-label="重做" disabled>
+                            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"
+                                aria-hidden="true">
+                                <path d="M15 14L20 9L15 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                    stroke-linejoin="round" />
+                                <path d="M4 20V13C4 10.7909 5.79086 9 8 9H20" stroke="currentColor" stroke-width="2"
+                                    stroke-linecap="round" stroke-linejoin="round" />
+                            </svg>
+                        </button>
+                    </div>
+
                     <div class="header-group aspect-ratio-group">
                         <span class="header-label">画幅</span>
                         <select id="aspect-ratio-select" class="header-select">
@@ -210,6 +231,26 @@
             </div>
             <div class="rundown-topbar-actions">
                 <span id="rundown-save-state" class="rundown-save-state" data-state="saved" role="status" aria-live="polite">已保存</span>
+                <div class="history-btn-group" role="group" aria-label="撤销与重做">
+                    <button id="rundown-undo-btn" class="secondary-btn history-icon-btn" type="button" title="撤销" aria-label="撤销" disabled>
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"
+                            aria-hidden="true">
+                            <path d="M9 14L4 9L9 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                stroke-linejoin="round" />
+                            <path d="M20 20V13C20 10.7909 18.2091 9 16 9H4" stroke="currentColor" stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                    </button>
+                    <button id="rundown-redo-btn" class="secondary-btn history-icon-btn" type="button" title="重做" aria-label="重做" disabled>
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"
+                            aria-hidden="true">
+                            <path d="M15 14L20 9L15 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                stroke-linejoin="round" />
+                            <path d="M4 20V13C4 10.7909 5.79086 9 8 9H20" stroke="currentColor" stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                    </button>
+                </div>
                 <button id="rundown-add-day-btn" class="secondary-btn" type="button">添加拍摄日</button>
                 <button id="rundown-export-btn" class="primary-btn" type="button">导出 Rundown PDF</button>
             </div>

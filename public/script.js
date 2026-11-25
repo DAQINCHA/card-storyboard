@@ -37,6 +37,11 @@ import {
     syncBrowserHistory
 } from './js/router.js';
 import { createRundownController } from './js/rundown.js';
+import { createProjectHistory } from './js/history.js';
+import {
+    cacheImageSourceToRecovery,
+    createImageRecoveryCache
+} from './js/image-recovery-cache.js';
 
 const ACCESS_ROLE_LABELS = Object.freeze({
     anonymous: '只读',
@@ -86,6 +91,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     const openRundownBtn = document.getElementById('open-rundown-btn');
     const multiSelectToggleBtn = document.getElementById('multi-select-toggle-btn');
     const backToHomeBtn = document.getElementById('back-to-home-btn');
+    const undoBtn = document.getElementById('undo-btn');
+    const redoBtn = document.getElementById('redo-btn');
     const aspectRatioSelect = document.getElementById('aspect-ratio-select');
     const projectAccessBadge = document.getElementById('project-access-badge');
     const projectTotalDuration = document.getElementById('project-total-duration');
@@ -203,13 +210,37 @@ document.addEventListener('DOMContentLoaded', async () => {
     let activeTextColorField = null;
     let lastTextColorPointer = null;
     let clipboardToastHideTimer = null;
+    const IS_APPLE_PLATFORM = /mac|iphone|ipad|ipod/i.test(navigator.platform || navigator.userAgent || '');
+    const UNDO_SHORTCUT_LABEL = IS_APPLE_PLATFORM ? '⌘Z' : 'Ctrl+Z';
+    const REDO_SHORTCUT_LABEL = IS_APPLE_PLATFORM ? '⇧⌘Z' : 'Ctrl+Shift+Z';
+    const imageRecoveryCache = createImageRecoveryCache();
+    const knownServerImageIds = new Set();
+    const pendingImageCachePromises = new Set();
+    const pendingDeletionTasks = new Set();
+    let historyInputTimer = null;
+    let pendingHistoryInputMeta = null;
+    let editorCardKeySequence = 0;
+
+    const projectHistory = createProjectHistory({
+        maxDepth: 50,
+        mergeWindowMs: 650,
+        onChange: () => updateHistoryButtons()
+    });
 
     const rundownController = createRundownController({
         view: rundownView,
         printRoot: rundownPrintRoot,
         onBack: () => returnToStoryboardFromRundown(),
-        onChange: (nextRundown) => {
+        onUndo: () => performUndo(),
+        onRedo: () => performRedo(),
+        onCommitInput: () => sealHistoryInput(),
+        onChange: (nextRundown, meta = {}) => {
             currentRundown = nextRundown;
+            recordHistoryCheckpoint(meta.label || '修改拍摄计划', {
+                view: 'rundown',
+                mergeKey: meta.mergeKey || null,
+                immediate: meta.immediate !== false && !meta.mergeKey
+            });
             scheduleSaveState();
         }
     });
@@ -386,6 +417,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }
         if (manageSharingBtn) manageSharingBtn.classList.toggle('hidden', !currentCapabilities.canManageMembers);
+        updateHistoryButtons();
     }
 
     function stopLockHeartbeat() {
@@ -590,6 +622,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         scheduleSyncProjectHeaderWidth(true);
         scheduleSyncSceneHeaderInputByViewport();
         scheduleSyncShotGroupFrames();
+        updateHistoryButtons();
     }
 
     function syncShareViewHistory(viewName, replaceHistory = false) {
@@ -614,11 +647,14 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (isShareMode) syncShareViewHistory('rundown', replaceHistory);
             else syncBrowserHistory({ view: 'rundown', projectId: currentProjectId }, replaceHistory);
         }
+        updateHistoryButtons();
     }
 
     async function openRundownView(options = {}) {
         const { syncHistory = true, replaceHistory = false, flushSave = true } = options;
         if (!currentProject) return false;
+        flushPendingDeletionTasks();
+        flushPendingHistoryInput();
         if (flushSave && !await flushPendingSave()) {
             window.alert('当前分镜尚未保存，暂时无法进入 Rundown。');
             return false;
@@ -630,6 +666,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function returnToStoryboardFromRundown() {
+        flushPendingHistoryInput();
         switchToEditor({ syncHistory: !isShareMode, replaceHistory: false });
         if (isShareMode) syncShareViewHistory('editor', false);
     }
@@ -879,7 +916,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         cleanupEditableFieldMarkup(activeTextColorField);
         autoResizeTextarea(activeTextColorField);
-        scheduleSaveState();
+        commitEditorChange('更改文字颜色');
         hideTextColorPalette();
     }
 
@@ -1492,7 +1529,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             scheduleSyncCardInsertTriggers();
             return;
         }
-        const newCard = addShot(true, null, { beforeNode });
+        const newCard = addShot(true, null, { beforeNode, historyLabel: '插入分镜' });
         newCard?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
 
@@ -1831,7 +1868,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
         reconcileShotUnits();
         updateShotNumbers();
-        scheduleSaveState();
+        commitEditorChange('镜头编组');
         setMultiSelectMode(false);
     }
 
@@ -1863,7 +1900,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
         reconcileShotUnits();
         updateShotNumbers();
-        scheduleSaveState();
+        commitEditorChange('取消编组');
         setMultiSelectMode(false);
     }
 
@@ -1986,6 +2023,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             hoveredImageUploadContext = null;
         }
 
+        queueCardImagesForRecovery(uniqueCards);
+
         uniqueCards.forEach((card) => {
             selectedShotCards.delete(card);
             card.classList.remove('multi-selected');
@@ -1994,7 +2033,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
         refreshMultiSelectPanel();
 
-        setTimeout(() => {
+        const historyLabel = uniqueCards.length > 1
+            ? `删除 ${uniqueCards.length} 个分镜`
+            : '删除分镜';
+        registerPendingDeletionTask(200, () => {
             uniqueCards.forEach((card) => {
                 if (card.isConnected) {
                     card.remove();
@@ -2002,11 +2044,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
             reconcileShotUnits();
             updateShotNumbers();
-            scheduleSaveState();
+            commitEditorChange(historyLabel);
             if (exitMultiSelectAfterDone) {
                 setMultiSelectMode(false);
             }
-        }, 200);
+        });
     }
 
     function deleteSelectedShotsWithConfirm() {
@@ -2018,7 +2060,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
         if (shouldConfirmShotDeletion(selectedCards)) {
-            const confirmed = window.confirm(`确认批量删除已选中的 ${selectedCards.length} 个镜头？此操作不可恢复。`);
+            const confirmed = window.confirm(`确认批量删除已选中的 ${selectedCards.length} 个镜头？`);
             if (!confirmed) {
                 return;
             }
@@ -2060,7 +2102,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
 
         updateShotNumbers();
-        scheduleSaveState();
+        commitEditorChange('移动镜头到其他场');
         setMultiSelectMode(false);
     }
 
@@ -2216,7 +2258,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         scheduleSyncShotGroupFrames();
 
         if (shouldSave && !isRestoringState) {
-            scheduleSaveState();
+            commitEditorChange(collapsed ? '折叠场次' : '展开场次');
         }
     }
 
@@ -2232,11 +2274,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function addSceneDividerFromTrigger() {
-        const existingDividers = getAllSceneDividers();
-        if (existingDividers.length === 0) {
-            addSceneDivider({ animate: false, shouldSave: false, insertAtTop: true, dividerData: { label: '第1场' } });
-        }
-        addSceneDivider({ animate: true, shouldSave: true });
+        runEditorTransaction('添加场分界线', () => {
+            const existingDividers = getAllSceneDividers();
+            if (existingDividers.length === 0) {
+                addSceneDivider({ animate: false, shouldSave: false, insertAtTop: true, dividerData: { label: '第1场' } });
+            }
+            addSceneDivider({ animate: true, shouldSave: true });
+        });
     }
 
     function removeOnlyLeadingSceneDividerIfNeeded() {
@@ -2456,6 +2500,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 labelText.blur();
             }
         });
+        const dividerHistoryKey = `scene-divider-label:${++editorCardKeySequence}`;
         labelText.addEventListener('blur', () => {
             if (editorReadOnly) {
                 return;
@@ -2464,7 +2509,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             labelText.textContent = normalized;
             scheduleSyncSceneHeaderInputByViewport();
             if (!isRestoringState) {
-                scheduleSaveState();
+                commitEditorChange('修改场次标题', { mergeKey: dividerHistoryKey, immediate: false });
+                sealHistoryInput();
             }
         });
         labelText.addEventListener('input', () => {
@@ -2473,7 +2519,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
             scheduleSyncSceneHeaderInputByViewport();
             if (!isRestoringState) {
-                scheduleSaveState();
+                commitEditorChange('修改场次标题', { mergeKey: dividerHistoryKey, immediate: false });
             }
         });
         label.addEventListener('click', () => {
@@ -2487,19 +2533,21 @@ document.addEventListener('DOMContentLoaded', async () => {
             event.stopPropagation();
             const sceneCards = getFollowingSceneCards(divider);
             if (sceneCards.length > 0) {
-                const confirmed = window.confirm('确认删除这个场分界线？此操作不可恢复。');
+                const confirmed = window.confirm('确认删除这个场分界线？');
                 if (!confirmed) {
                     return;
                 }
             }
             divider.style.opacity = '0';
             divider.style.transform = 'translateY(-5px)';
-            setTimeout(() => {
-                divider.remove();
+            registerPendingDeletionTask(180, () => {
+                if (divider.isConnected) {
+                    divider.remove();
+                }
                 removeOnlyLeadingSceneDividerIfNeeded();
                 updateShotNumbers();
-                scheduleSaveState();
-            }, 180);
+                commitEditorChange('删除场分界线');
+            });
         });
 
         divider.appendChild(toggleBtn);
@@ -2542,7 +2590,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             updateShotNumbers();
         }
         if (shouldSave && !isRestoringState) {
-            scheduleSaveState();
+            commitEditorChange('添加场分界线');
         }
         return divider;
     }
@@ -2578,6 +2626,410 @@ document.addEventListener('DOMContentLoaded', async () => {
             imageSrc: preview?.src || '',
             hasImage: preview?.style.display !== 'none' && Boolean(preview?.src)
         };
+    }
+
+    function cloneHistoryValue(value) {
+        if (typeof structuredClone === 'function') {
+            return structuredClone(value);
+        }
+        return JSON.parse(JSON.stringify(value));
+    }
+
+    function getActiveHistoryView() {
+        if (rundownView && !rundownView.classList.contains('hidden')) {
+            return 'rundown';
+        }
+        if (editorView && !editorView.classList.contains('hidden')) {
+            return 'editor';
+        }
+        return 'home';
+    }
+
+    function syncKnownServerImageIds(shots) {
+        knownServerImageIds.clear();
+        (Array.isArray(shots) ? shots : []).forEach((shot) => {
+            if (!shot || isSceneDividerShot(shot)) {
+                return;
+            }
+            const imageId = typeof shot.imageId === 'string' ? shot.imageId.trim() : '';
+            if (shot.hasImage && imageId) {
+                knownServerImageIds.add(imageId);
+            }
+        });
+    }
+
+    function trackImageCachePromise(promise) {
+        if (!promise) {
+            return;
+        }
+        pendingImageCachePromises.add(promise);
+        promise.finally(() => {
+            pendingImageCachePromises.delete(promise);
+        });
+    }
+
+    function queueCardImagesForRecovery(cardsOrEntries) {
+        const items = Array.isArray(cardsOrEntries) ? cardsOrEntries : [cardsOrEntries];
+        items.forEach((item) => {
+            if (!item) {
+                return;
+            }
+            let imageId = '';
+            let imageSrc = '';
+            let imageElement = null;
+            if (item instanceof Element) {
+                imageId = String(item.dataset.imageId || '').trim();
+                imageElement = item.querySelector('.shot-image-preview');
+                imageSrc = imageElement?.style.display !== 'none' ? (imageElement?.src || '') : '';
+            } else {
+                imageId = String(item.imageId || '').trim();
+                imageSrc = typeof item.imageSrc === 'string' ? item.imageSrc : '';
+                imageElement = item.imageElement || null;
+            }
+            if (!imageId) {
+                return;
+            }
+            // 一旦图片准备被移除或替换，先移出已知服务端集合，防止飞行中 PUT 导致的竞态。
+            knownServerImageIds.delete(imageId);
+            if (!imageSrc || imageRecoveryCache.has(imageId)) {
+                return;
+            }
+            trackImageCachePromise(
+                cacheImageSourceToRecovery(imageRecoveryCache, { imageId, imageSrc, imageElement }).catch(() => false)
+            );
+        });
+    }
+
+    function buildHistorySnapshot() {
+        const raw = buildStateSnapshot();
+        const shots = (Array.isArray(raw.shots) ? raw.shots : []).map((shot) => {
+            if (!shot || isSceneDividerShot(shot)) {
+                return { ...shot };
+            }
+            const copy = { ...shot };
+            const imageId = typeof copy.imageId === 'string' ? copy.imageId.trim() : '';
+            if (copy.hasImage && imageId) {
+                if (typeof copy.imageSrc === 'string' && copy.imageSrc.startsWith('data:image/')) {
+                    imageRecoveryCache.set(imageId, copy.imageSrc);
+                }
+                copy.imageId = imageId;
+                copy.imageSrc = '';
+                copy.hasImage = true;
+            } else {
+                copy.imageId = '';
+                copy.imageSrc = '';
+                copy.hasImage = false;
+            }
+            return copy;
+        });
+        return {
+            name: raw.name,
+            scene: raw.scene,
+            aspectRatio: raw.aspectRatio,
+            shots,
+            rundown: cloneHistoryValue(raw.rundown || { version: 1, days: [] })
+        };
+    }
+
+    function materializeSnapshotForRender(snapshot) {
+        const projectId = currentProjectId;
+        const shots = (Array.isArray(snapshot?.shots) ? snapshot.shots : []).map((shot) => {
+            if (!shot || isSceneDividerShot(shot)) {
+                return { ...shot };
+            }
+            const copy = { ...shot };
+            const imageId = typeof copy.imageId === 'string' ? copy.imageId.trim() : '';
+            if (copy.hasImage && imageId) {
+                if (knownServerImageIds.has(imageId) && projectId) {
+                    copy.imageSrc = `/api/projects/${projectId}/images/${encodeURIComponent(imageId)}`;
+                } else if (imageRecoveryCache.has(imageId)) {
+                    copy.imageSrc = imageRecoveryCache.get(imageId);
+                } else if (projectId) {
+                    copy.imageSrc = `/api/projects/${projectId}/images/${encodeURIComponent(imageId)}`;
+                } else {
+                    copy.hasImage = false;
+                    copy.imageId = '';
+                    copy.imageSrc = '';
+                }
+            } else {
+                copy.hasImage = false;
+                copy.imageId = '';
+                copy.imageSrc = '';
+            }
+            return copy;
+        });
+        return {
+            name: snapshot?.name || '',
+            scene: snapshot?.scene || '',
+            aspectRatio: snapshot?.aspectRatio || '16/9',
+            shots,
+            rundown: cloneHistoryValue(snapshot?.rundown || { version: 1, days: [] })
+        };
+    }
+
+    function updateHistoryButtons() {
+        const editable = Boolean(currentProjectId && !editorReadOnly && !saveConflictActive);
+        const editorState = projectHistory.getState('editor');
+        const rundownState = projectHistory.getState('rundown');
+
+        const editorUndoTitle = editorState.canUndo && editorState.undoLabel
+            ? `撤销：${editorState.undoLabel} (${UNDO_SHORTCUT_LABEL})`
+            : `撤销 (${UNDO_SHORTCUT_LABEL})`;
+        const editorRedoTitle = editorState.canRedo && editorState.redoLabel
+            ? `重做：${editorState.redoLabel} (${REDO_SHORTCUT_LABEL})`
+            : `重做 (${REDO_SHORTCUT_LABEL})`;
+        if (undoBtn) {
+            undoBtn.disabled = !editable || !editorState.canUndo;
+            undoBtn.title = editorUndoTitle;
+            undoBtn.setAttribute('aria-label', editorUndoTitle);
+        }
+        if (redoBtn) {
+            redoBtn.disabled = !editable || !editorState.canRedo;
+            redoBtn.title = editorRedoTitle;
+            redoBtn.setAttribute('aria-label', editorRedoTitle);
+        }
+
+        const rundownUndoTitle = rundownState.canUndo && rundownState.undoLabel
+            ? `撤销：${rundownState.undoLabel} (${UNDO_SHORTCUT_LABEL})`
+            : `撤销 (${UNDO_SHORTCUT_LABEL})`;
+        const rundownRedoTitle = rundownState.canRedo && rundownState.redoLabel
+            ? `重做：${rundownState.redoLabel} (${REDO_SHORTCUT_LABEL})`
+            : `重做 (${REDO_SHORTCUT_LABEL})`;
+        rundownController.setHistoryState({
+            canUndo: editable && rundownState.canUndo,
+            canRedo: editable && rundownState.canRedo,
+            undoTitle: rundownUndoTitle,
+            redoTitle: rundownRedoTitle
+        });
+    }
+
+    function cancelPendingDeletionTasks() {
+        pendingDeletionTasks.forEach((task) => {
+            clearTimeout(task.timerId);
+        });
+        pendingDeletionTasks.clear();
+    }
+
+    function flushPendingDeletionTasks() {
+        if (pendingDeletionTasks.size === 0) {
+            return;
+        }
+        const tasks = Array.from(pendingDeletionTasks);
+        pendingDeletionTasks.clear();
+        tasks.forEach((task) => {
+            clearTimeout(task.timerId);
+            task.flush();
+        });
+    }
+
+    function registerPendingDeletionTask(delayMs, flush) {
+        const task = {
+            timerId: null,
+            flush: () => {
+                if (!pendingDeletionTasks.has(task)) {
+                    return;
+                }
+                pendingDeletionTasks.delete(task);
+                flush();
+            }
+        };
+        task.timerId = setTimeout(() => {
+            task.flush();
+        }, delayMs);
+        pendingDeletionTasks.add(task);
+        return task;
+    }
+
+    function clearPendingHistoryInputTimer() {
+        if (historyInputTimer) {
+            clearTimeout(historyInputTimer);
+            historyInputTimer = null;
+        }
+        pendingHistoryInputMeta = null;
+    }
+
+    function flushPendingHistoryInput({ seal = true } = {}) {
+        if (historyInputTimer) {
+            clearTimeout(historyInputTimer);
+            historyInputTimer = null;
+        }
+        const meta = pendingHistoryInputMeta;
+        pendingHistoryInputMeta = null;
+        if (meta && !isRestoringState && currentProjectId && !editorReadOnly && !saveConflictActive) {
+            projectHistory.record(buildHistorySnapshot(), {
+                label: meta.label,
+                view: meta.view,
+                mergeKey: meta.mergeKey,
+                immediate: false
+            });
+        }
+        if (seal) {
+            projectHistory.seal();
+        }
+    }
+
+    function sealHistoryInput() {
+        flushPendingHistoryInput({ seal: true });
+    }
+
+    function recordHistoryCheckpoint(label, options = {}) {
+        if (isRestoringState || !currentProjectId || editorReadOnly || saveConflictActive) {
+            return;
+        }
+        const view = options.view === 'rundown' ? 'rundown' : 'editor';
+        const mergeKey = typeof options.mergeKey === 'string' && options.mergeKey ? options.mergeKey : null;
+        const immediate = options.immediate === true || !mergeKey;
+
+        if (projectHistory.isInTransaction()) {
+            return;
+        }
+
+        if (immediate) {
+            flushPendingHistoryInput({ seal: true });
+            projectHistory.record(buildHistorySnapshot(), {
+                label,
+                view,
+                mergeKey: null,
+                immediate: true
+            });
+            return;
+        }
+
+        if (pendingHistoryInputMeta && (pendingHistoryInputMeta.mergeKey !== mergeKey || pendingHistoryInputMeta.view !== view)) {
+            flushPendingHistoryInput({ seal: true });
+        }
+
+        pendingHistoryInputMeta = { label, view, mergeKey };
+        if (historyInputTimer) {
+            clearTimeout(historyInputTimer);
+        }
+        historyInputTimer = setTimeout(() => {
+            historyInputTimer = null;
+            const meta = pendingHistoryInputMeta;
+            pendingHistoryInputMeta = null;
+            if (!meta || isRestoringState || !currentProjectId || editorReadOnly || saveConflictActive) {
+                return;
+            }
+            projectHistory.record(buildHistorySnapshot(), {
+                label: meta.label,
+                view: meta.view,
+                mergeKey: meta.mergeKey,
+                immediate: false
+            });
+        }, 240);
+    }
+
+    function commitEditorChange(label, options = {}) {
+        recordHistoryCheckpoint(label, { view: 'editor', ...options });
+        scheduleSaveState();
+    }
+
+    function runEditorTransaction(label, action) {
+        if (isRestoringState || !currentProjectId || editorReadOnly || saveConflictActive) {
+            return action();
+        }
+        flushPendingDeletionTasks();
+        flushPendingHistoryInput({ seal: true });
+        projectHistory.beginTransaction({ label, view: 'editor' });
+        try {
+            return action();
+        } finally {
+            const changed = projectHistory.endTransaction(() => buildHistorySnapshot(), { label, view: 'editor' });
+            if (changed) {
+                scheduleSaveState();
+            }
+        }
+    }
+
+    function resetProjectHistoryState() {
+        cancelPendingDeletionTasks();
+        clearPendingHistoryInputTimer();
+        pendingImageCachePromises.clear();
+        imageRecoveryCache.clear();
+        knownServerImageIds.clear();
+        projectHistory.clear();
+        updateHistoryButtons();
+    }
+
+    function applyHistorySnapshot(result, direction) {
+        if (!result || !result.snapshot || !currentProjectId) {
+            return;
+        }
+        const activeView = getActiveHistoryView();
+        const scrollX = window.scrollX;
+        const scrollY = window.scrollY;
+        const materialized = materializeSnapshotForRender(result.snapshot);
+
+        closeAllColorPalettes();
+        hideTextColorPalette();
+        addDropdownMenu.classList.remove('show');
+        exportDropdownMenu.classList.remove('show');
+        exportDropdownToggle.setAttribute('aria-expanded', 'false');
+
+        renderEditorSnapshot(materialized, { seedEmptyProject: false });
+        currentRundown = materialized.rundown;
+        if (currentProject) {
+            currentProject = {
+                ...currentProject,
+                name: materialized.name,
+                scene: materialized.scene,
+                aspectRatio: materialized.aspectRatio,
+                shots: materialized.shots,
+                rundown: currentRundown
+            };
+        }
+        if (activeView === 'rundown') {
+            rundownController.applyRundownState(currentRundown, currentProject);
+        } else {
+            rundownController.acceptSavedRundown(currentRundown);
+        }
+
+        scheduleSaveState();
+        updateHistoryButtons();
+
+        requestAnimationFrame(() => {
+            window.scrollTo(scrollX, scrollY);
+        });
+
+        const verb = direction === 'redo' ? '已重做' : '已撤销';
+        const scopePrefix = activeView === 'editor' && result.view === 'rundown' ? '（拍摄计划）' : '';
+        showClipboardToast(`${verb}${scopePrefix}：${result.label}`);
+    }
+
+    function performUndo() {
+        if (!currentProjectId || editorReadOnly || saveConflictActive) {
+            return false;
+        }
+        const activeView = getActiveHistoryView();
+        if (activeView !== 'editor' && activeView !== 'rundown') {
+            return false;
+        }
+        flushPendingDeletionTasks();
+        flushPendingHistoryInput({ seal: true });
+        const result = projectHistory.undo(activeView);
+        if (!result) {
+            return false;
+        }
+        applyHistorySnapshot(result, 'undo');
+        return true;
+    }
+
+    function performRedo() {
+        if (!currentProjectId || editorReadOnly || saveConflictActive) {
+            return false;
+        }
+        const activeView = getActiveHistoryView();
+        if (activeView !== 'editor' && activeView !== 'rundown') {
+            return false;
+        }
+        flushPendingDeletionTasks();
+        flushPendingHistoryInput({ seal: true });
+        const result = projectHistory.redo(activeView);
+        if (!result) {
+            return false;
+        }
+        applyHistorySnapshot(result, 'redo');
+        return true;
     }
 
     function buildStateSnapshot() {
@@ -2675,6 +3127,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (saveStatusState !== 'error') setSaveStatusState('saving');
 
         pendingSavePromise = perfMeasureAsync('saveState', async () => {
+            if (pendingImageCachePromises.size > 0) {
+                await Promise.allSettled(Array.from(pendingImageCachePromises));
+                if (isRestoringState || currentProjectId !== saveProjectId || editorReadOnly || !editLeaseToken || saveConflictActive) {
+                    return;
+                }
+            }
             const payload = buildStateSnapshot();
             payload.baseVersion = currentProjectVersion;
             perfMeta.payloadShots = Array.isArray(payload.shots) ? payload.shots.length : 0;
@@ -2685,11 +3143,17 @@ document.addEventListener('DOMContentLoaded', async () => {
                 headers: { 'X-Edit-Lease': editLeaseToken },
                 body
             });
+            if (currentProjectId !== saveProjectId) {
+                return;
+            }
             currentProjectVersion = saved.version;
             currentProject = saved;
-            currentRundown = saved.rundown || { version: 1, days: [] };
-            rundownController.acceptSavedRundown(currentRundown);
-            setSaveStatusState('saved');
+            syncKnownServerImageIds(saved?.shots);
+            if (!hasUnsavedChanges) {
+                currentRundown = saved.rundown || { version: 1, days: [] };
+                rundownController.acceptSavedRundown(currentRundown);
+                setSaveStatusState('saved');
+            }
             perfMeta.savedShots = Array.isArray(saved?.shots) ? saved.shots.length : 0;
             syncSavedImageReferences(payload.shots, saved?.shots, saveProjectId);
 
@@ -2759,6 +3223,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     async function flushPendingSave() {
+        flushPendingDeletionTasks();
+        flushPendingHistoryInput({ seal: true });
         if (saveTimer) {
             clearTimeout(saveTimer);
             saveTimer = null;
@@ -2774,6 +3240,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function discardPendingLocalChanges() {
+        cancelPendingDeletionTasks();
+        clearPendingHistoryInputTimer();
         if (saveTimer) {
             clearTimeout(saveTimer);
             saveTimer = null;
@@ -2922,13 +3390,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         try {
+            const hadPreviousImage = Boolean(
+                imageContext.card.dataset.imageId
+                && imageContext.preview.style.display !== 'none'
+                && imageContext.preview.src
+            );
+            if (hadPreviousImage) {
+                queueCardImagesForRecovery(imageContext.card);
+            }
             const compressedImageSrc = await compressUploadImageToDataUrl(file);
-            imageContext.card.dataset.imageId = createClientImageId();
+            const nextImageId = createClientImageId();
+            imageRecoveryCache.set(nextImageId, compressedImageSrc);
+            imageContext.card.dataset.imageId = nextImageId;
             imageContext.preview.src = compressedImageSrc;
             imageContext.preview.style.display = 'block';
             imageContext.placeholder.style.display = 'none';
             imageContext.container.classList.add('has-image');
-            scheduleSaveState();
+            commitEditorChange(hadPreviousImage ? '更换参考图' : '添加参考图');
         } catch (error) {
             console.error('Apply image failed:', error);
             alert('图片处理失败，请重试。');
@@ -2936,13 +3414,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function clearImageFromCard(imageContext) {
+        queueCardImagesForRecovery(imageContext.card);
         imageContext.preview.src = '';
         imageContext.preview.style.display = 'none';
         imageContext.placeholder.style.display = 'flex';
         imageContext.container.classList.remove('has-image');
         imageContext.fileInput.value = '';
         delete imageContext.card.dataset.imageId;
-        scheduleSaveState();
+        commitEditorChange('删除参考图');
     }
 
     function toChineseMoveLabel(rawValue = '') {
@@ -3998,32 +4477,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         }, () => perfMeta);
     }
 
-    function applyProjectToEditor(project) {
-        const perfStartedAt = perfNow();
-        const perfMeta = {
-            projectId: project?.id || null,
-            incomingShots: Array.isArray(project?.shots) ? project.shots.length : 0,
-            renderedCards: 0,
-            renderedDividers: 0
-        };
+    function renderEditorSnapshot(snapshot, options = {}) {
+        const { seedEmptyProject = false } = options;
         setMultiSelectMode(false);
         isRestoringState = true;
         try {
-            currentProject = project;
-            currentProjectId = project.id;
-            currentProjectVersion = project.version;
-            currentRundown = project.rundown || { version: 1, days: [] };
-            currentCapabilities = project.capabilities || {};
-            takeoverNoticeShown = false;
-            sessionStorage.setItem(PROJECT_STORAGE_KEY, String(project.id));
             if (projectInput) {
-                projectInput.value = project.name || '';
+                projectInput.value = snapshot?.name || '';
             }
             if (sceneInput) {
-                sceneInput.value = project.scene || '';
+                sceneInput.value = snapshot?.scene || '';
             }
 
-            const targetAspect = project.aspectRatio || '16/9';
+            const targetAspect = snapshot?.aspectRatio || '16/9';
             const hasOption = Array.from(aspectRatioSelect.options).some((option) => option.value === targetAspect);
             aspectRatioSelect.value = hasOption ? targetAspect : '16/9';
             document.documentElement.style.setProperty('--shot-aspect', aspectRatioSelect.value);
@@ -4033,8 +4499,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             sceneDividerTriggerEl = null;
             cardInsertLayer = null;
             shotCount = 0;
-            const shots = Array.isArray(project.shots) ? project.shots : [];
-            if (shots.length === 0) {
+            const shots = Array.isArray(snapshot?.shots) ? snapshot.shots : [];
+            if (shots.length === 0 && seedEmptyProject) {
                 for (let i = 0; i < DEFAULT_NEW_PROJECT_SHOT_COUNT; i += 1) {
                     addShot(false);
                 }
@@ -4048,17 +4514,41 @@ document.addEventListener('DOMContentLoaded', async () => {
                 });
             }
             updateShotNumbers();
-            hasUnsavedChanges = false;
-            setSaveStatusState('saved');
         } finally {
             isRestoringState = false;
             applyEditorAccess();
-            if (perfState.enabled) {
-                perfMeta.renderedCards = storyboardGrid.querySelectorAll('.shot-card').length;
-                perfMeta.renderedDividers = storyboardGrid.querySelectorAll('.scene-divider').length;
-            }
-            perfRecord('applyProjectToEditor', perfNow() - perfStartedAt, perfMeta);
         }
+    }
+
+    function applyProjectToEditor(project) {
+        const perfStartedAt = perfNow();
+        const perfMeta = {
+            projectId: project?.id || null,
+            incomingShots: Array.isArray(project?.shots) ? project.shots.length : 0,
+            renderedCards: 0,
+            renderedDividers: 0
+        };
+        resetProjectHistoryState();
+        currentProject = project;
+        currentProjectId = project.id;
+        currentProjectVersion = project.version;
+        currentRundown = project.rundown || { version: 1, days: [] };
+        currentCapabilities = project.capabilities || {};
+        takeoverNoticeShown = false;
+        sessionStorage.setItem(PROJECT_STORAGE_KEY, String(project.id));
+        syncKnownServerImageIds(project.shots);
+
+        renderEditorSnapshot(project, { seedEmptyProject: true });
+        hasUnsavedChanges = false;
+        setSaveStatusState('saved');
+        projectHistory.reset(buildHistorySnapshot());
+        updateHistoryButtons();
+
+        if (perfState.enabled) {
+            perfMeta.renderedCards = storyboardGrid.querySelectorAll('.shot-card').length;
+            perfMeta.renderedDividers = storyboardGrid.querySelectorAll('.scene-divider').length;
+        }
+        perfRecord('applyProjectToEditor', perfNow() - perfStartedAt, perfMeta);
     }
 
     async function openProject(projectId, options = {}) {
@@ -4123,7 +4613,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
 
                 updateShotNumbers();
-                scheduleSaveState();
+                commitEditorChange('调整排序');
 
                 if (evt.item) {
                     evt.item.classList.add('drag-settled');
@@ -4152,7 +4642,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function addShot(animate = true, shotData = null, options = {}) {
         const perfStartedAt = perfNow();
-        const { beforeNode = null } = options;
+        const { beforeNode = null, historyLabel = '添加分镜' } = options;
         const perfMeta = {
             animate: Boolean(animate),
             hasShotData: Boolean(shotData),
@@ -4160,6 +4650,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             totalCards: 0
         };
         shotCount++;
+        const editorCardKey = ++editorCardKeySequence;
         const clone = template.content.cloneNode(true);
         const card = clone.querySelector('.shot-card');
         card.dataset.shotUnitId = typeof shotData?.shotUnitId === 'string' && shotData.shotUnitId.trim()
@@ -4175,7 +4666,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const deleteBtn = clone.querySelector('.delete-shot-btn');
         deleteBtn.addEventListener('click', () => {
             if (shouldConfirmShotDeletion([card])) {
-                const confirmed = window.confirm('确认删除这个镜头？此操作不可恢复。');
+                const confirmed = window.confirm('确认删除这个镜头？');
                 if (!confirmed) {
                     return;
                 }
@@ -4237,6 +4728,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const textFields = clone.querySelectorAll('.auto-resize-textarea');
         textFields.forEach((field) => {
+            const isActionField = field.classList.contains('text-action');
+            const textLabel = isActionField ? '编辑镜头内容' : '编辑备注';
+            const textMergeKey = `shot-text:${editorCardKey}:${isActionField ? 'action' : 'dialogue'}`;
             field.addEventListener('paste', (event) => {
                 // Chrome keeps a contenteditable field focused after the pointer moves away.
                 // Let image pastes bubble to the hovered card's image handler instead of
@@ -4254,17 +4748,18 @@ document.addEventListener('DOMContentLoaded', async () => {
                 insertPlainTextIntoEditableField(field, plainText);
                 cleanupEditableFieldMarkup(field);
                 autoResizeTextarea(field);
-                scheduleSaveState();
+                commitEditorChange(textLabel);
             });
             field.addEventListener('input', () => {
                 cleanupEditableFieldMarkup(field);
                 autoResizeTextarea(field);
                 hideTextColorPalette();
-                scheduleSaveState();
+                commitEditorChange(textLabel, { mergeKey: textMergeKey, immediate: false });
             });
             field.addEventListener('blur', () => {
                 cleanupEditableFieldMarkup(field);
                 autoResizeTextarea(field);
+                sealHistoryInput();
             });
             field.addEventListener('mousedown', () => {
                 hideTextColorPalette();
@@ -4338,13 +4833,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                 return;
             }
 
-            setHeaderColor(option.dataset.color, true);
+            setHeaderColor(option.dataset.color, false);
             syncShotGroupSceneColor(card, option.dataset.color);
+            commitEditorChange('更改场景颜色');
             colorPalette.classList.remove('show');
         });
 
         if (vfxCheckbox) {
-            vfxCheckbox.addEventListener('change', scheduleSaveState);
+            vfxCheckbox.addEventListener('change', () => commitEditorChange('切换 VFX'));
         }
         const syncShotTimeInputSizer = () => {
             if (!shotTimeInput || !shotTimeInputSizer) {
@@ -4352,6 +4848,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
             shotTimeInputSizer.dataset.value = shotTimeInput.value || shotTimeInput.placeholder || ' ';
         };
+        const shotTimeMergeKey = `shot-time:${editorCardKey}`;
         if (shotTimeInput) {
             shotTimeInput.addEventListener('input', () => {
                 delete card.dataset.legacyTimeRange;
@@ -4363,7 +4860,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
                 syncShotTimeInputSizer();
                 updateTotalDuration();
-                scheduleSaveState();
+                commitEditorChange('修改镜头时长', { mergeKey: shotTimeMergeKey, immediate: false });
+            });
+            shotTimeInput.addEventListener('blur', () => {
+                sealHistoryInput();
             });
         }
         const stepShotDuration = (step) => {
@@ -4380,12 +4880,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             shotTimeIncrement.addEventListener('click', () => stepShotDuration(0.1));
         }
         if (shotSizeSelect) {
-            shotSizeSelect.addEventListener('change', scheduleSaveState);
+            shotSizeSelect.addEventListener('change', () => commitEditorChange('更改景别'));
         }
         if (cameraMovementSelect) {
-            cameraMovementSelect.addEventListener('change', scheduleSaveState);
+            cameraMovementSelect.addEventListener('change', () => commitEditorChange('更改运镜'));
         }
-        radios.forEach((radio) => radio.addEventListener('change', scheduleSaveState));
+        radios.forEach((radio) => radio.addEventListener('change', () => {
+            syncShotGroupCameraMove(card);
+            commitEditorChange('更改拍摄设备');
+        }));
 
         if (shotData && typeof shotData === 'object') {
             if (typeof shotData.headerColor === 'string' && shotData.headerColor) {
@@ -4503,7 +5006,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         if (!isRestoringState) {
             updateShotNumbers();
-            scheduleSaveState();
+            commitEditorChange(historyLabel);
         }
         if (perfState.enabled) {
             perfMeta.totalCards = storyboardGrid.querySelectorAll('.shot-card').length;
@@ -4573,7 +5076,65 @@ document.addEventListener('DOMContentLoaded', async () => {
         event.stopPropagation();
         toggleShotCardSelection(card, event.clientX, event.clientY);
     }, true);
+    function resolveHistoryShortcut(event) {
+        if (event.isComposing || event.keyCode === 229 || event.altKey) {
+            return null;
+        }
+        const primaryModifier = IS_APPLE_PLATFORM
+            ? event.metaKey && !event.ctrlKey
+            : event.ctrlKey && !event.metaKey;
+        if (!primaryModifier) {
+            return null;
+        }
+        const key = String(event.key || '').toLowerCase();
+        if (key === 'z') {
+            return event.shiftKey ? 'redo' : 'undo';
+        }
+        if (!IS_APPLE_PLATFORM && !event.shiftKey && key === 'y') {
+            return 'redo';
+        }
+        return null;
+    }
+
+    function shouldIgnoreHistoryShortcut(event) {
+        const activeView = getActiveHistoryView();
+        if (activeView !== 'editor' && activeView !== 'rundown') {
+            return true;
+        }
+        if (editorReadOnly || saveConflictActive || !currentProjectId) {
+            return true;
+        }
+        if (document.querySelector('.app-dialog-backdrop, [role="dialog"][aria-modal="true"]')) {
+            return true;
+        }
+        const target = event.target instanceof Element ? event.target : null;
+        if (!target) {
+            return false;
+        }
+        if (target.closest('#rundown-search, #project-search, .app-dialog')) {
+            return true;
+        }
+        if (isEditableElement(target) && !target.closest('#editor-view, #rundown-view')) {
+            return true;
+        }
+        return false;
+    }
+
+    undoBtn?.addEventListener('click', () => performUndo());
+    redoBtn?.addEventListener('click', () => performRedo());
+
     document.addEventListener('keydown', (event) => {
+        const historyAction = resolveHistoryShortcut(event);
+        if (historyAction && !shouldIgnoreHistoryShortcut(event)) {
+            event.preventDefault();
+            if (historyAction === 'undo') {
+                performUndo();
+            } else {
+                performRedo();
+            }
+            return;
+        }
+
         if (isCopyShortcut(event) && getActiveHoveredImageUploadContext()) {
             if (hasActiveEditableSelection()) {
                 return;
@@ -4640,8 +5201,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     dropdownItems.forEach((item) => {
         item.addEventListener('click', (e) => {
             const count = parseInt(e.target.dataset.addCount, 10);
-            for (let i = 0; i < count; i++) {
-                addShot(false);
+            if (Number.isInteger(count) && count > 0) {
+                runEditorTransaction(`添加 ${count} 个分镜`, () => {
+                    for (let i = 0; i < count; i++) {
+                        addShot(false);
+                    }
+                });
             }
             addDropdownMenu.classList.remove('show');
         });
@@ -4659,6 +5224,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             switchToEditor({ syncHistory: true, replaceHistory: true });
             return false;
         }
+        resetProjectHistoryState();
         await releaseCurrentLock();
         await releaseProjectPresence();
         switchToHome({ syncHistory, replaceHistory });
@@ -4697,11 +5263,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     aspectRatioSelect.addEventListener('change', (e) => {
         document.documentElement.style.setProperty('--shot-aspect', e.target.value);
         scheduleSyncShotGroupFrames();
-        scheduleSaveState();
+        commitEditorChange('切换画幅');
     });
 
     if (projectInput) {
-        projectInput.addEventListener('input', scheduleSaveState);
+        projectInput.addEventListener('input', () => {
+            commitEditorChange('修改项目名', { mergeKey: 'project-name', immediate: false });
+        });
+        projectInput.addEventListener('blur', () => {
+            sealHistoryInput();
+        });
     }
 
     projectSortSelect.addEventListener('change', () => {
