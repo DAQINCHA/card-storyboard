@@ -4348,8 +4348,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         };
 
         if (!isAdminHome) {
-            projectsGrid.appendChild(createProjectCard());
             projectsCache.forEach((project) => projectsGrid.appendChild(createProjectElement(project)));
+            projectsGrid.appendChild(createProjectCard());
             return;
         }
 
@@ -4405,8 +4405,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             const grid = document.createElement('div');
             grid.className = 'account-project-grid';
-            if (Number(owner.id) === Number(appUser.id)) grid.appendChild(createProjectCard());
             projects.forEach((project) => grid.appendChild(createProjectElement(project)));
+            if (Number(owner.id) === Number(appUser.id)) grid.appendChild(createProjectCard());
 
             const collapseButton = divider.querySelector('.account-project-collapse-btn');
             const setCollapsed = (nextCollapsed) => {
